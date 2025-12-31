@@ -127,7 +127,6 @@ app_ui = ui.page_fluid(
                         choices=["1", "3", "10"],
                         selected="1",
                     ),
-                    ui.input_action_button("analyze", "Start Analysis"),
                     ui.hr(),
                     theme_picker_ui(),
                 ),

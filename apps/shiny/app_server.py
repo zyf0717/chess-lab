@@ -153,19 +153,7 @@ def server(input, output, session):
             }
         )
 
-    @reactive.Effect
-    @reactive.event(input.analyze)
-    def _analyze():
-        pgn_text = ""
-        upload = input.pgn_upload()
-        if upload:
-            path = upload[0]["datapath"]
-            with open(path, "r", encoding="utf-8") as handle:
-                pgn_text = handle.read()
-
-        if not pgn_text.strip():
-            pgn_text = input.pgn_text() or ""
-
+    def _load_pgn(pgn_text: str) -> None:
         if not pgn_text.strip():
             game_val.set(None)
             moves_val.set([])
@@ -179,7 +167,7 @@ def server(input, output, session):
 
         try:
             game, moves, sans = parse_pgn(pgn_text)
-        except ValueError as e:
+        except ValueError:
             game_val.set(None)
             moves_val.set([])
             sans_val.set([])
@@ -196,6 +184,19 @@ def server(input, output, session):
         ply_val.set(0)
         analysis_ready.set(True)
         _set_game_info(game)
+
+    @reactive.Effect
+    def _auto_analyze():
+        pgn_text = ""
+        upload = input.pgn_upload()
+        if upload:
+            path = upload[0]["datapath"]
+            with open(path, "r", encoding="utf-8") as handle:
+                pgn_text = handle.read()
+
+        if not pgn_text.strip():
+            pgn_text = input.pgn_text() or ""
+        _load_pgn(pgn_text)
 
     @reactive.Effect
     @reactive.event(input.prev_move)
