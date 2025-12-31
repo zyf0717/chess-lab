@@ -132,6 +132,7 @@ app_ui = ui.page_fluid(
                                 ui.input_action_button("last_move", ">>"),
                                 class_="d-flex justify-content-center gap-2 mt-2",
                             ),
+                            ui.output_text("eval_line"),
                         ),
                     ),
                     ui.column(

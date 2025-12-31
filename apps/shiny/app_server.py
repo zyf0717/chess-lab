@@ -8,6 +8,8 @@ import chess.svg
 from shiny import reactive, render, ui
 from shinyswatch import theme_picker_server
 
+from analysis.stockfish import StockfishAnalyzer, ensure_stockfish_binary
+
 BOARD_SIZE = 480
 
 
@@ -44,6 +46,35 @@ def server(input, output, session):
     moves_val = reactive.Value([])
     sans_val = reactive.Value([])
     ply_val = reactive.Value(0)
+    eval_val = reactive.Value("Eval: --")
+    engine_val = reactive.Value(None)
+    engine_error = reactive.Value(None)
+
+    def _get_analyzer() -> StockfishAnalyzer:
+        error = engine_error()
+        if error:
+            raise RuntimeError(error)
+
+        analyzer = engine_val()
+        if analyzer is not None:
+            return analyzer
+
+        try:
+            path = ensure_stockfish_binary()
+        except RuntimeError as exc:
+            engine_error.set(str(exc))
+            raise
+
+        analyzer = StockfishAnalyzer(path)
+        engine_val.set(analyzer)
+        return analyzer
+
+    def _shutdown_engine() -> None:
+        analyzer = engine_val()
+        if analyzer is not None:
+            analyzer.close()
+
+    session.on_ended(_shutdown_engine)
 
     @reactive.Effect
     @reactive.event(input.analyze)
@@ -104,6 +135,36 @@ def server(input, output, session):
     def _last_move():
         ply_val.set(len(moves_val()))
 
+    def _current_board() -> chess.Board:
+        game = game_val()
+        moves = moves_val()
+        ply = ply_val()
+        if game is None:
+            board = chess.Board()
+        else:
+            board = game.board()
+            for move in moves[:ply]:
+                board.push(move)
+        return board
+
+    @reactive.Effect
+    def _update_eval():
+        _ = ply_val()
+        board = _current_board()
+        try:
+            analyzer = _get_analyzer()
+        except RuntimeError as exc:
+            eval_val.set(f"Engine unavailable: {exc}")
+            return
+
+        try:
+            evaluation = analyzer.analyse(board)
+        except Exception as exc:
+            eval_val.set(f"Engine error: {exc}")
+            return
+
+        eval_val.set(f"Eval: {evaluation}")
+
     @reactive.Effect
     @reactive.event(input.move_cell)
     def _jump_to_selected_cell():
@@ -124,18 +185,14 @@ def server(input, output, session):
     @output
     @render.ui
     def board_view():
-        game = game_val()
-        moves = moves_val()
-        ply = ply_val()
-        if game is None:
-            board = chess.Board()
-        else:
-            board = game.board()
-            for move in moves[:ply]:
-                board.push(move)
-
+        board = _current_board()
         svg = chess.svg.board(board=board, size=BOARD_SIZE)
         return ui.HTML(svg)
+
+    @output
+    @render.text
+    def eval_line():
+        return eval_val()
 
     @output
     @render.ui
