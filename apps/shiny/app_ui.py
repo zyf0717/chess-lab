@@ -5,6 +5,10 @@ from shinyswatch import theme_picker_ui
 app_ui = ui.page_fluid(
     ui.tags.style(
         """
+        :root {
+            --board-size: 480px;
+        }
+
         /* Make the sidebar independently scrollable */
         .sidebar {
             max-height: 100vh;
@@ -12,6 +16,18 @@ app_ui = ui.page_fluid(
             position: sticky;
             top: 0;
             background: inherit;
+        }
+
+        .board-frame {
+            min-height: var(--board-size);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .move-table-wrap {
+            max-height: var(--board-size);
+            overflow-y: auto;
         }
 
         .move-table td[data-ply] {
@@ -42,6 +58,26 @@ app_ui = ui.page_fluid(
     ),
     ui.tags.script(
         """
+        const scrollSelectedIntoView = () => {
+            const container = document.getElementById("move_table_container");
+            if (!container) return;
+            const selected = container.querySelector("td.is-selected");
+            if (!selected) return;
+            const selectedRect = selected.getBoundingClientRect();
+            const containerRect = container.getBoundingClientRect();
+            if (selectedRect.top < containerRect.top || selectedRect.bottom > containerRect.bottom) {
+                selected.scrollIntoView({ block: "nearest" });
+            }
+        };
+
+        const observeMoveTable = () => {
+            const container = document.getElementById("move_table_container");
+            if (!container || container._observerAttached) return;
+            const observer = new MutationObserver(() => scrollSelectedIntoView());
+            observer.observe(container, { childList: true, subtree: true });
+            container._observerAttached = true;
+        };
+
         document.addEventListener("click", (event) => {
             const cell = event.target.closest("td[data-ply]");
             if (!cell) return;
@@ -60,7 +96,12 @@ app_ui = ui.page_fluid(
             if (window.Shiny && Shiny.setInputValue) {
                 Shiny.setInputValue("move_cell", { ply: ply }, { priority: "event" });
             }
+
+            scrollSelectedIntoView();
         });
+
+        document.addEventListener("DOMContentLoaded", observeMoveTable);
+        document.addEventListener("shiny:connected", observeMoveTable);
         """
     ),
     ui.navset_bar(
@@ -83,7 +124,7 @@ app_ui = ui.page_fluid(
                         8,
                         ui.card(
                             ui.card_header("Board"),
-                            ui.div(ui.output_ui("board_view"), class_="text-center"),
+                            ui.div(ui.output_ui("board_view"), class_="board-frame"),
                             ui.div(
                                 ui.input_action_button("first_move", "<<"),
                                 ui.input_action_button("prev_move", "<"),
@@ -97,7 +138,11 @@ app_ui = ui.page_fluid(
                         4,
                         ui.card(
                             ui.card_header("Moves"),
-                            ui.output_ui("move_list"),
+                            ui.div(
+                                ui.output_ui("move_list"),
+                                id="move_table_container",
+                                class_="move-table-wrap",
+                            ),
                         ),
                     ),
                 ),
