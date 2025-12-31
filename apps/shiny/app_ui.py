@@ -124,14 +124,21 @@ app_ui = ui.page_fluid(
                     ui.input_select(
                         "think_time",
                         "Engine time (seconds)",
-                        choices=["1", "3", "5", "10", "30", "60"],
-                        selected="5",
+                        choices=["1", "3", "10"],
+                        selected="1",
                     ),
                     ui.input_action_button("analyze", "Start Analysis"),
                     ui.hr(),
                     theme_picker_ui(),
                 ),
                 ui.row(
+                    ui.column(
+                        12,
+                        ui.card(
+                            ui.card_header("Game Info"),
+                            ui.output_ui("game_info"),
+                        ),
+                    ),
                     ui.column(
                         8,
                         ui.card(

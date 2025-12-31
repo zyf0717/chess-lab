@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import queue
 import threading
+from datetime import datetime, timedelta
 
 import chess
 import chess.pgn
@@ -50,6 +51,17 @@ def server(input, output, session):
     eval_val = reactive.Value("Eval: --")
     pv_val = reactive.Value([])
     analysis_ready = reactive.Value(False)
+    info_val = reactive.Value(
+        {
+            "start": "Unknown",
+            "end": "Unknown",
+            "duration": "Unknown",
+            "white": "Unknown",
+            "black": "Unknown",
+            "white_elo": "Unknown",
+            "black_elo": "Unknown",
+        }
+    )
     analysis_queue: queue.Queue[tuple[int, str]] = queue.Queue()
     analysis_thread: threading.Thread | None = None
     analysis_stop: threading.Event | None = None
@@ -63,6 +75,83 @@ def server(input, output, session):
             analysis_thread.join(timeout=1.0)
 
     session.on_ended(_shutdown_analysis)
+
+    def _parse_date(value: str | None):
+        if not value or "?" in value:
+            return None
+        try:
+            return datetime.strptime(value, "%Y.%m.%d").date()
+        except ValueError:
+            return None
+
+    def _parse_time(value: str | None):
+        if not value or "?" in value:
+            return None
+        for fmt in ("%H:%M:%S", "%H:%M"):
+            try:
+                return datetime.strptime(value, fmt).time()
+            except ValueError:
+                continue
+        return None
+
+    def _parse_datetime(date_value: str | None, time_value: str | None):
+        date_part = _parse_date(date_value)
+        time_part = _parse_time(time_value)
+        if date_part and time_part:
+            return datetime.combine(date_part, time_part)
+        return None
+
+    def _format_dt(value: datetime | None) -> str:
+        if value is None:
+            return "Unknown"
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+
+    def _format_duration(start: datetime | None, end: datetime | None) -> str:
+        if start is None or end is None:
+            return "Unknown"
+        delta = end - start
+        if delta.total_seconds() < 0:
+            delta += timedelta(days=1)
+        seconds = int(delta.total_seconds())
+        hours, remainder = divmod(seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    def _set_game_info(game: chess.pgn.Game | None) -> None:
+        if game is None:
+            info_val.set(
+                {
+                    "start": "Unknown",
+                    "end": "Unknown",
+                    "duration": "Unknown",
+                    "white": "Unknown",
+                    "black": "Unknown",
+                    "white_elo": "Unknown",
+                    "black_elo": "Unknown",
+                }
+            )
+            return
+
+        headers = game.headers
+        start_dt = _parse_datetime(
+            headers.get("UTCDate") or headers.get("Date"),
+            headers.get("UTCTime") or headers.get("Time"),
+        )
+        end_dt = _parse_datetime(
+            headers.get("EndDate") or headers.get("UTCDate") or headers.get("Date"),
+            headers.get("EndTime"),
+        )
+        info_val.set(
+            {
+                "start": _format_dt(start_dt),
+                "end": _format_dt(end_dt),
+                "duration": _format_duration(start_dt, end_dt),
+                "white": headers.get("White", "Unknown"),
+                "black": headers.get("Black", "Unknown"),
+                "white_elo": headers.get("WhiteElo", "Unknown"),
+                "black_elo": headers.get("BlackElo", "Unknown"),
+            }
+        )
 
     @reactive.Effect
     @reactive.event(input.analyze)
@@ -85,6 +174,7 @@ def server(input, output, session):
             analysis_ready.set(False)
             eval_val.set("Eval: --")
             pv_val.set([])
+            _set_game_info(None)
             return
 
         try:
@@ -97,6 +187,7 @@ def server(input, output, session):
             analysis_ready.set(False)
             eval_val.set("Eval: --")
             pv_val.set([])
+            _set_game_info(None)
             return
 
         game_val.set(game)
@@ -104,6 +195,7 @@ def server(input, output, session):
         sans_val.set(sans)
         ply_val.set(0)
         analysis_ready.set(True)
+        _set_game_info(game)
 
     @reactive.Effect
     @reactive.event(input.prev_move)
@@ -200,6 +292,8 @@ def server(input, output, session):
             return
         _ = ply_val()
         _ = moves_val()
+        _ = input.multipv()
+        _ = input.think_time()
         board = _current_board()
         _start_streaming_eval(board)
 
@@ -250,6 +344,32 @@ def server(input, output, session):
     @render.text
     def eval_line():
         return eval_val()
+
+    @output
+    @render.ui
+    def game_info():
+        info = info_val()
+        return ui.tags.table(
+            {"class": "table table-sm text-center mb-0"},
+            ui.tags.thead(
+                ui.tags.tr(
+                    ui.tags.th("Start"),
+                    ui.tags.th("End"),
+                    ui.tags.th("Duration"),
+                    ui.tags.th("White (Elo)"),
+                    ui.tags.th("Black (Elo)"),
+                )
+            ),
+            ui.tags.tbody(
+                ui.tags.tr(
+                    ui.tags.td(info["start"]),
+                    ui.tags.td(info["end"]),
+                    ui.tags.td(info["duration"]),
+                    ui.tags.td(f"{info['white']} ({info['white_elo']})"),
+                    ui.tags.td(f"{info['black']} ({info['black_elo']})"),
+                )
+            ),
+        )
 
     @output
     @render.ui
