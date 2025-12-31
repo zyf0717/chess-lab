@@ -9,7 +9,7 @@ import pandas as pd
 from shiny import reactive, render, ui
 from shinyswatch import theme_picker_server
 
-BOARD_SIZE = 360
+BOARD_SIZE = 480
 
 
 def parse_pgn(pgn_text: str):
@@ -28,13 +28,13 @@ def parse_pgn(pgn_text: str):
     return game, moves, sans
 
 
-def move_rows(sans: list[str]) -> list[tuple[str, str]]:
+def move_rows(sans: list[str]) -> list[tuple[int, str, str]]:
     rows = []
     for idx in range(0, len(sans), 2):
         move_no = idx // 2 + 1
-        white = f"{move_no}. {sans[idx]}"
+        white = sans[idx]
         black = sans[idx + 1] if idx + 1 < len(sans) else ""
-        rows.append((white, black))
+        rows.append((move_no, white, black))
     return rows
 
 
@@ -45,7 +45,6 @@ def server(input, output, session):
     moves_val = reactive.Value([])
     sans_val = reactive.Value([])
     ply_val = reactive.Value(0)
-    status_val = reactive.Value("Upload or paste PGN, then analyze.")
 
     @reactive.Effect
     @reactive.event(input.analyze)
@@ -61,7 +60,6 @@ def server(input, output, session):
             pgn_text = input.pgn_text() or ""
 
         if not pgn_text.strip():
-            status_val.set("Please provide PGN text or upload a PGN file.")
             game_val.set(None)
             moves_val.set([])
             sans_val.set([])
@@ -71,7 +69,6 @@ def server(input, output, session):
         try:
             game, moves, sans = parse_pgn(pgn_text)
         except ValueError as exc:
-            status_val.set(str(exc))
             game_val.set(None)
             moves_val.set([])
             sans_val.set([])
@@ -82,7 +79,6 @@ def server(input, output, session):
         moves_val.set(moves)
         sans_val.set(sans)
         ply_val.set(0)
-        status_val.set(f"Loaded {len(moves)} moves.")
 
     @reactive.Effect
     @reactive.event(input.prev_move)
@@ -109,14 +105,37 @@ def server(input, output, session):
     def _last_move():
         ply_val.set(len(moves_val()))
 
-    @output
-    @render.text
-    def status_line():
-        moves = moves_val()
-        ply = ply_val()
-        if moves:
-            return f"Move {ply} of {len(moves)}"
-        return status_val()
+    def _selected_rows():
+        for attr in (
+            "move_list_selected_rows",
+            "move_list_rows_selected",
+            "move_list_selected_row",
+        ):
+            getter = getattr(input, attr, None)
+            if getter is None:
+                continue
+            value = getter()
+            if value is None:
+                continue
+            if isinstance(value, (list, tuple)):
+                return value
+            return [value]
+        return []
+
+    @reactive.Effect
+    def _jump_to_selected_row():
+        selected = _selected_rows()
+        if not selected:
+            return
+        try:
+            row_index = int(selected[0])
+        except (TypeError, ValueError, IndexError):
+            return
+
+        total = len(moves_val())
+        target_ply = min(total, (row_index + 1) * 2)
+        if target_ply != ply_val():
+            ply_val.set(target_ply)
 
     @output
     @render.ui
@@ -138,10 +157,11 @@ def server(input, output, session):
     @render.data_frame
     def move_list():
         sans = sans_val()
+
         if not sans:
-            empty = pd.DataFrame(columns=["White", "Black"])
-            return render.DataGrid(empty)
+            empty = pd.DataFrame(columns=["#", "White", "Black"])
+            return render.DataGrid(empty, selection_mode="row")
 
         rows = move_rows(sans)
-        data = pd.DataFrame(rows, columns=["White", "Black"])
-        return render.DataGrid(data)
+        data = pd.DataFrame(rows, columns=["#", "White", "Black"])
+        return render.DataGrid(data, selection_mode="row")
