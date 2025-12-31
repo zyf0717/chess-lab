@@ -69,7 +69,9 @@ def server(input, output, session):
     analysis_stop: threading.Event | None = None
     analysis_id = 0
     last_analysis_key: tuple[str, int, float] | None = None
-    annotation_queue: queue.Queue[tuple[int, dict[int, str], dict[str, int]]] = queue.Queue()
+    annotation_queue: queue.Queue[
+        tuple[int, dict[int, str], dict[str, dict[str, int]]]
+    ] = queue.Queue()
     annotation_thread: threading.Thread | None = None
     annotation_stop: threading.Event | None = None
     annotation_id = 0
@@ -240,31 +242,45 @@ def server(input, output, session):
         ply_val.set(len(moves_val()))
 
     def _classify_delta(delta_cp: int) -> str:
-        if delta_cp <= -300:
+        cpl = max(0, -delta_cp)
+        if cpl >= 300:
             return "??"
-        if delta_cp <= -150:
+        if cpl >= 150:
             return "?"
-        if delta_cp <= -70:
+        if cpl >= 70:
             return "?!"
-        if delta_cp >= 300:
-            return "!!"
-        if delta_cp >= 150:
-            return "!"
-        if delta_cp >= 70:
-            return "!?"
         return ""
 
-    def _summarize_annotations(annotations: dict[int, str], total_plies: int) -> dict[str, int]:
-        labels = ["??", "?", "?!", "!?", "!", "!!"]
-        counts = {label: 0 for label in labels}
-        neutral = 0
+    def _summarize_annotations(
+        annotations: dict[int, str],
+        cpl_by_ply: dict[int, int],
+        total_plies: int,
+    ) -> dict[str, dict[str, int | float]]:
+        labels = ["??", "?", "?!"]
+        counts = {
+            "White": {label: 0 for label in labels},
+            "Black": {label: 0 for label in labels},
+        }
+        neutral = {"White": 0, "Black": 0}
+        totals = {"White": 0, "Black": 0}
+        moves = {"White": 0, "Black": 0}
         for ply in range(1, total_plies + 1):
+            side = "White" if ply % 2 == 1 else "Black"
+            moves[side] += 1
+            totals[side] += cpl_by_ply.get(ply, 0)
             label = annotations.get(ply, "")
             if label:
-                counts[label] += 1
+                counts[side][label] += 1
             else:
-                neutral += 1
-        counts["OK"] = neutral
+                neutral[side] += 1
+        counts["White"]["OK"] = neutral["White"]
+        counts["Black"]["OK"] = neutral["Black"]
+        counts["White"]["avg_cpl"] = (
+            totals["White"] / moves["White"] if moves["White"] else 0.0
+        )
+        counts["Black"]["avg_cpl"] = (
+            totals["Black"] / moves["Black"] if moves["Black"] else 0.0
+        )
         return counts
 
     @reactive.Effect
@@ -292,7 +308,9 @@ def server(input, output, session):
         if annotation_stop is not None:
             annotation_stop.set()
         annotation_stop = threading.Event()
-        local_queue: queue.Queue[tuple[int, dict[int, str], dict[str, int]]] = queue.Queue()
+        local_queue: queue.Queue[
+            tuple[int, dict[int, str], dict[str, dict[str, int]]]
+        ] = queue.Queue()
         annotation_queue = local_queue
         annotation_id += 1
         current_id = annotation_id
@@ -309,14 +327,22 @@ def server(input, output, session):
                 evals = evaluate_positions(base_board, move_list, time_limit=time_limit, stop_event=stop_event)
                 if stop_event.is_set() or len(evals) <= 1:
                     return
-                annotations: dict[int, str] = {}
+                label_annotations: dict[int, str] = {}
+                display_annotations: dict[int, str] = {}
+                cpl_by_ply: dict[int, int] = {}
                 for ply in range(1, len(evals)):
                     delta = evals[ply] - evals[ply - 1]
                     mover_is_white = (ply % 2) == 1
                     delta_for_mover = delta if mover_is_white else -delta
-                    annotations[ply] = _classify_delta(delta_for_mover)
-                summary = _summarize_annotations(annotations, len(move_list))
-                out_queue.put((current_id, annotations, summary))
+                    cpl = max(0, -int(delta_for_mover))
+                    cpl_by_ply[ply] = cpl
+                    label = _classify_delta(delta_for_mover)
+                    if label:
+                        signed = int(delta_for_mover)
+                        display_annotations[ply] = f"{label} ({signed})"
+                        label_annotations[ply] = label
+                summary = _summarize_annotations(label_annotations, cpl_by_ply, len(move_list))
+                out_queue.put((current_id, display_annotations, summary))
             except Exception:
                 out_queue.put((current_id, {}, {}))
 
@@ -509,12 +535,31 @@ def server(input, output, session):
         summary = summary_val()
         if not summary:
             return ui.p("No annotations yet.", class_="text-muted")
-        order = ["??", "?", "?!", "!?", "!", "!!", "OK"]
+        order = ["??", "?", "?!", "OK"]
+        white_counts = summary.get("White", {})
+        black_counts = summary.get("Black", {})
+        white_avg = float(white_counts.get("avg_cpl", 0.0))
+        black_avg = float(black_counts.get("avg_cpl", 0.0))
         return ui.tags.table(
             {"class": "table table-sm text-center mb-0"},
-            ui.tags.thead(ui.tags.tr(*[ui.tags.th(label) for label in order])),
+            ui.tags.thead(
+                ui.tags.tr(
+                    ui.tags.th("Player"),
+                    *[ui.tags.th(label) for label in order],
+                    ui.tags.th("Avg CPL"),
+                )
+            ),
             ui.tags.tbody(
-                ui.tags.tr(*[ui.tags.td(str(summary.get(label, 0))) for label in order])
+                ui.tags.tr(
+                    ui.tags.td("White"),
+                    *[ui.tags.td(str(white_counts.get(label, 0))) for label in order],
+                    ui.tags.td(f"{white_avg:.1f}"),
+                ),
+                ui.tags.tr(
+                    ui.tags.td("Black"),
+                    *[ui.tags.td(str(black_counts.get(label, 0))) for label in order],
+                    ui.tags.td(f"{black_avg:.1f}"),
+                ),
             ),
         )
 
