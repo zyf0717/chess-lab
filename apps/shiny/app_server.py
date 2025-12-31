@@ -48,7 +48,7 @@ def server(input, output, session):
     moves_val = reactive.Value([])
     sans_val = reactive.Value([])
     ply_val = reactive.Value(0)
-    eval_val = reactive.Value("Δ Eval: --")
+    eval_val = reactive.Value("CPL: --")
     pv_val = reactive.Value([])
     analysis_ready = reactive.Value(False)
     annotations_val = reactive.Value({})
@@ -65,7 +65,7 @@ def server(input, output, session):
             "black_elo": "Unknown",
         }
     )
-    analysis_queue: queue.Queue[tuple[int, str | None, list[str], str | None]] = (
+    analysis_queue: queue.Queue[tuple[int, int | None, list[str], str | None]] = (
         queue.Queue()
     )
     analysis_thread: threading.Thread | None = None
@@ -176,7 +176,7 @@ def server(input, output, session):
             sans_val.set([])
             ply_val.set(0)
             analysis_ready.set(False)
-            eval_val.set("Δ Eval: --")
+            eval_val.set("CPL: --")
             pv_val.set([])
             annotations_val.set({})
             summary_val.set({})
@@ -193,7 +193,7 @@ def server(input, output, session):
             sans_val.set([])
             ply_val.set(0)
             analysis_ready.set(False)
-            eval_val.set("Δ Eval: --")
+            eval_val.set("CPL: --")
             pv_val.set([])
             annotations_val.set({})
             summary_val.set({})
@@ -263,7 +263,7 @@ def server(input, output, session):
 
     def _summarize_annotations(
         annotations: dict[int, str],
-        cpl_by_ply: dict[int, float],
+        cpl_by_ply: dict[int, int],
         total_plies: int,
     ) -> dict[str, dict[str, int | float]]:
         labels = ["??", "?", "?!"]
@@ -342,19 +342,18 @@ def server(input, output, session):
                     return
                 label_annotations: dict[int, str] = {}
                 display_annotations: dict[int, str] = {}
-                cpl_by_ply: dict[int, float] = {}
+                cpl_by_ply: dict[int, int] = {}
                 for ply in range(1, len(evals)):
                     prev_cp = clamp_score(evals[ply - 1])
                     curr_cp = clamp_score(evals[ply])
                     delta = curr_cp - prev_cp
-                    delta_white = delta / 100.0
                     mover_is_white = (ply % 2) == 1
                     delta_for_mover = delta if mover_is_white else -delta
                     cpl_cp = max(0, -int(delta_for_mover))
-                    cpl_by_ply[ply] = cpl_cp / 100.0
+                    cpl_by_ply[ply] = cpl_cp
                     label = _classify_delta(delta_for_mover)
                     if label:
-                        display_annotations[ply] = f"{label} ({delta_white:+.2f})"
+                        display_annotations[ply] = f"{label} ({cpl_cp})"
                         label_annotations[ply] = label
                 summary = _summarize_annotations(
                     label_annotations, cpl_by_ply, len(move_list)
@@ -384,7 +383,9 @@ def server(input, output, session):
     def _current_board() -> chess.Board:
         return _board_at_ply(ply_val())
 
-    def _start_streaming_eval(board: chess.Board, prev_fen: str | None) -> None:
+    def _start_streaming_eval(
+        board: chess.Board, prev_fen: str | None, mover_is_white: bool
+    ) -> None:
         nonlocal analysis_id, analysis_stop, analysis_queue, analysis_thread, last_analysis_key
         try:
             multipv = int(input.multipv())
@@ -408,12 +409,12 @@ def server(input, output, session):
         if analysis_stop is not None:
             analysis_stop.set()
         analysis_stop = threading.Event()
-        local_queue: queue.Queue[tuple[int, str | None, list[str], str | None]] = (
+        local_queue: queue.Queue[tuple[int, int | None, list[str], str | None]] = (
             queue.Queue()
         )
         analysis_queue = local_queue
 
-        eval_val.set("Δ Eval: …")
+        eval_val.set("CPL: …")
         pv_val.set([])
         engine_move_val.set(None)
 
@@ -426,7 +427,7 @@ def server(input, output, session):
             try:
                 board_obj = chess.Board(fen_str)
                 prev_board = chess.Board(prev_fen_str) if prev_fen_str else None
-                for delta_text, lines, best_move in stream_analysis(
+                for delta_cp, lines, best_move in stream_analysis(
                     board_obj,
                     time_limit=think_time,
                     multipv=multipv,
@@ -435,7 +436,13 @@ def server(input, output, session):
                 ):
                     if stop_event.is_set():
                         break
-                    out_queue.put((current_id, delta_text, lines, best_move))
+                    if delta_cp is None:
+                        out_queue.put((current_id, None, lines, best_move))
+                        continue
+                    # Convert white-POV delta to mover CPL for display.
+                    delta_for_mover = delta_cp if mover_is_white else -delta_cp
+                    cpl = max(0, -delta_for_mover)
+                    out_queue.put((current_id, cpl, lines, best_move))
             except Exception as exc:
                 out_queue.put((current_id, f"Engine unavailable: {exc}", [], None))
 
@@ -459,7 +466,8 @@ def server(input, output, session):
         prev_fen = None
         if ply > 0:
             prev_fen = _board_at_ply(ply - 1).fen()
-        _start_streaming_eval(board, prev_fen)
+        mover_is_white = (ply % 2) == 1
+        _start_streaming_eval(board, prev_fen, mover_is_white)
 
     @reactive.Effect
     def _drain_eval_queue():
@@ -483,9 +491,9 @@ def server(input, output, session):
             if isinstance(latest, str) and latest.startswith("Engine unavailable"):
                 eval_val.set(latest)
             elif latest is None:
-                eval_val.set("Δ Eval: --")
+                eval_val.set("CPL: --")
             else:
-                eval_val.set(f"Δ Eval: {latest}")
+                eval_val.set(f"CPL: {latest}")
         if latest_lines is not None:
             pv_val.set(latest_lines)
         if latest_move is not None:
@@ -614,8 +622,8 @@ def server(input, output, session):
         black_counts = summary.get("Black", {})
         white_avg = float(white_counts.get("avg_cpl", 0.0))
         black_avg = float(black_counts.get("avg_cpl", 0.0))
-        white_avg_cpl = round(white_avg * 100)
-        black_avg_cpl = round(black_avg * 100)
+        white_avg_cpl = round(white_avg)
+        black_avg_cpl = round(black_avg)
         note = (
             ui.p("Analyzing...", class_="text-muted mb-1")
             if status == "running"

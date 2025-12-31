@@ -192,11 +192,6 @@ def clamp_score(score_cp: int, threshold: int = 1000) -> int:
     return max(-threshold, min(score_cp, threshold))
 
 
-def format_cp(score_cp: int) -> str:
-    value = score_cp / 100.0
-    sign = "+" if value >= 0 else ""
-    return f"{sign}{value:.2f}"
-
 class StockfishAnalyzer:
     def __init__(self, path: Path):
         self._engine = chess.engine.SimpleEngine.popen_uci(str(path))
@@ -221,6 +216,7 @@ def stream_analysis(
     stop_event=None,
     best_move_board: chess.Board | None = None,
 ):
+    """Yield (delta_cp_white, pv_lines, best_move_uci) while streaming analysis."""
     path = ensure_stockfish_binary()
     engine = chess.engine.SimpleEngine.popen_uci(str(path))
     try:
@@ -257,9 +253,9 @@ def stream_analysis(
                 if "score" in info and "pv" in info:
                     score = info["score"].pov(chess.WHITE)
                     curr_cp = clamp_score(score_to_cp(score))
-                    delta_text = None
+                    delta_cp = None
                     if prev_cp is not None:
-                        delta_text = format_cp(curr_cp - prev_cp)
+                        delta_cp = curr_cp - prev_cp
                     line_score = format_score(score)
                     line_pv = format_pv(board, info["pv"])
                     rank = int(info.get("multipv", 1))
@@ -270,7 +266,7 @@ def stream_analysis(
                         for _, (line_score, line_pv, _) in sorted(latest.items())
                     ]
                     best_entry = latest.get(1, (line_score, line_pv, first_move))
-                    yield delta_text, ordered, best_move_uci or best_entry[2]
+                    yield delta_cp, ordered, best_move_uci or best_entry[2]
                 if time.monotonic() - start >= time_limit:
                     break
     finally:
