@@ -180,6 +180,13 @@ def format_pv(board: chess.Board, pv: list[chess.Move], max_plies: int = 16) -> 
         temp.push(move)
     return " ".join(parts)
 
+
+def score_to_cp(score: chess.engine.PovScore, mate_score: int = 10000) -> int:
+    value = score.score(mate_score=mate_score)
+    if value is None:
+        return 0
+    return int(value)
+
 class StockfishAnalyzer:
     def __init__(self, path: Path):
         self._engine = chess.engine.SimpleEngine.popen_uci(str(path))
@@ -232,5 +239,30 @@ def stream_analysis(
                     yield best, ordered
                 if time.monotonic() - start >= time_limit:
                     break
+    finally:
+        engine.quit()
+
+
+def evaluate_positions(
+    board: chess.Board,
+    moves: list[chess.Move],
+    time_limit: float = 1.0,
+    stop_event=None,
+) -> list[int]:
+    path = ensure_stockfish_binary()
+    engine = chess.engine.SimpleEngine.popen_uci(str(path))
+    try:
+        limit = chess.engine.Limit(time=time_limit)
+        evals: list[int] = []
+        work_board = board.copy()
+        info = engine.analyse(work_board, limit)
+        evals.append(score_to_cp(info["score"].pov(chess.WHITE)))
+        for move in moves:
+            if stop_event is not None and stop_event.is_set():
+                break
+            work_board.push(move)
+            info = engine.analyse(work_board, limit)
+            evals.append(score_to_cp(info["score"].pov(chess.WHITE)))
+        return evals
     finally:
         engine.quit()

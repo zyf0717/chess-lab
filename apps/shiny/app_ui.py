@@ -127,6 +127,7 @@ app_ui = ui.page_fluid(
                         choices=["1", "3", "10"],
                         selected="1",
                     ),
+                    ui.input_action_button("annotate_moves", "Annotate Moves"),
                     ui.hr(),
                     theme_picker_ui(),
                 ),
@@ -163,6 +164,10 @@ app_ui = ui.page_fluid(
                                 id="move_table_container",
                                 class_="move-table-wrap",
                             ),
+                        ),
+                        ui.card(
+                            ui.card_header("Move Summary"),
+                            ui.output_ui("move_summary"),
                         ),
                     ),
                 ),

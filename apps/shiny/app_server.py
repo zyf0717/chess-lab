@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import chess
 import chess.pgn
 import chess.svg
-from analysis.stockfish import stream_analysis
+from analysis.stockfish import evaluate_positions, stream_analysis
 from shiny import reactive, render, ui
 from shinyswatch import theme_picker_server
 
@@ -51,6 +51,8 @@ def server(input, output, session):
     eval_val = reactive.Value("Eval: --")
     pv_val = reactive.Value([])
     analysis_ready = reactive.Value(False)
+    annotations_val = reactive.Value({})
+    summary_val = reactive.Value({})
     info_val = reactive.Value(
         {
             "start": "Unknown",
@@ -62,17 +64,25 @@ def server(input, output, session):
             "black_elo": "Unknown",
         }
     )
-    analysis_queue: queue.Queue[tuple[int, str]] = queue.Queue()
+    analysis_queue: queue.Queue[tuple[int, str, list[str]]] = queue.Queue()
     analysis_thread: threading.Thread | None = None
     analysis_stop: threading.Event | None = None
     analysis_id = 0
     last_analysis_key: tuple[str, int, float] | None = None
+    annotation_queue: queue.Queue[tuple[int, dict[int, str], dict[str, int]]] = queue.Queue()
+    annotation_thread: threading.Thread | None = None
+    annotation_stop: threading.Event | None = None
+    annotation_id = 0
 
     def _shutdown_analysis() -> None:
         if analysis_stop is not None:
             analysis_stop.set()
         if analysis_thread is not None and analysis_thread.is_alive():
             analysis_thread.join(timeout=1.0)
+        if annotation_stop is not None:
+            annotation_stop.set()
+        if annotation_thread is not None and annotation_thread.is_alive():
+            annotation_thread.join(timeout=1.0)
 
     session.on_ended(_shutdown_analysis)
 
@@ -162,6 +172,8 @@ def server(input, output, session):
             analysis_ready.set(False)
             eval_val.set("Eval: --")
             pv_val.set([])
+            annotations_val.set({})
+            summary_val.set({})
             _set_game_info(None)
             return
 
@@ -175,6 +187,8 @@ def server(input, output, session):
             analysis_ready.set(False)
             eval_val.set("Eval: --")
             pv_val.set([])
+            annotations_val.set({})
+            summary_val.set({})
             _set_game_info(None)
             return
 
@@ -183,6 +197,8 @@ def server(input, output, session):
         sans_val.set(sans)
         ply_val.set(0)
         analysis_ready.set(True)
+        annotations_val.set({})
+        summary_val.set({})
         _set_game_info(game)
 
     @reactive.Effect
@@ -223,6 +239,94 @@ def server(input, output, session):
     def _last_move():
         ply_val.set(len(moves_val()))
 
+    def _classify_delta(delta_cp: int) -> str:
+        if delta_cp <= -300:
+            return "??"
+        if delta_cp <= -150:
+            return "?"
+        if delta_cp <= -70:
+            return "?!"
+        if delta_cp >= 300:
+            return "!!"
+        if delta_cp >= 150:
+            return "!"
+        if delta_cp >= 70:
+            return "!?"
+        return ""
+
+    def _summarize_annotations(annotations: dict[int, str], total_plies: int) -> dict[str, int]:
+        labels = ["??", "?", "?!", "!?", "!", "!!"]
+        counts = {label: 0 for label in labels}
+        neutral = 0
+        for ply in range(1, total_plies + 1):
+            label = annotations.get(ply, "")
+            if label:
+                counts[label] += 1
+            else:
+                neutral += 1
+        counts["OK"] = neutral
+        return counts
+
+    @reactive.Effect
+    @reactive.event(input.annotate_moves)
+    def _annotate_moves():
+        nonlocal annotation_id, annotation_stop, annotation_queue, annotation_thread
+        if not analysis_ready():
+            return
+
+        game = game_val()
+        if game is None:
+            return
+        moves = moves_val()
+        if not moves:
+            annotations_val.set({})
+            summary_val.set({})
+            return
+
+        try:
+            think_time = float(input.think_time())
+        except (TypeError, ValueError):
+            think_time = 1.0
+        think_time = max(1.0, min(think_time, 60.0))
+
+        if annotation_stop is not None:
+            annotation_stop.set()
+        annotation_stop = threading.Event()
+        local_queue: queue.Queue[tuple[int, dict[int, str], dict[str, int]]] = queue.Queue()
+        annotation_queue = local_queue
+        annotation_id += 1
+        current_id = annotation_id
+
+        def worker(
+            base_fen: str,
+            move_list: list[chess.Move],
+            stop_event: threading.Event,
+            out_queue: queue.Queue,
+            time_limit: float,
+        ):
+            try:
+                base_board = chess.Board(base_fen)
+                evals = evaluate_positions(base_board, move_list, time_limit=time_limit, stop_event=stop_event)
+                if stop_event.is_set() or len(evals) <= 1:
+                    return
+                annotations: dict[int, str] = {}
+                for ply in range(1, len(evals)):
+                    delta = evals[ply] - evals[ply - 1]
+                    mover_is_white = (ply % 2) == 1
+                    delta_for_mover = delta if mover_is_white else -delta
+                    annotations[ply] = _classify_delta(delta_for_mover)
+                summary = _summarize_annotations(annotations, len(move_list))
+                out_queue.put((current_id, annotations, summary))
+            except Exception:
+                out_queue.put((current_id, {}, {}))
+
+        annotation_thread = threading.Thread(
+            target=worker,
+            args=(game.board().fen(), moves, annotation_stop, local_queue, think_time),
+            daemon=True,
+        )
+        annotation_thread.start()
+
     def _current_board() -> chess.Board:
         game = game_val()
         moves = moves_val()
@@ -259,7 +363,7 @@ def server(input, output, session):
         if analysis_stop is not None:
             analysis_stop.set()
         analysis_stop = threading.Event()
-        local_queue: queue.Queue[tuple[int, str]] = queue.Queue()
+        local_queue: queue.Queue[tuple[int, str, list[str]]] = queue.Queue()
         analysis_queue = local_queue
 
         eval_val.set("Eval: …")
@@ -316,6 +420,25 @@ def server(input, output, session):
             eval_val.set(latest)
         if latest_lines is not None:
             pv_val.set(latest_lines)
+
+    @reactive.Effect
+    def _drain_annotation_queue():
+        nonlocal annotation_queue, annotation_id
+        reactive.invalidate_later(0.4)
+        latest_annotations = None
+        latest_summary = None
+        while True:
+            try:
+                message_id, annotations, summary = annotation_queue.get_nowait()
+            except queue.Empty:
+                break
+            if message_id == annotation_id:
+                latest_annotations = annotations
+                latest_summary = summary
+        if latest_annotations is not None:
+            annotations_val.set(latest_annotations)
+        if latest_summary is not None:
+            summary_val.set(latest_summary)
 
     @reactive.Effect
     @reactive.event(input.move_cell)
@@ -382,6 +505,21 @@ def server(input, output, session):
 
     @output
     @render.ui
+    def move_summary():
+        summary = summary_val()
+        if not summary:
+            return ui.p("No annotations yet.", class_="text-muted")
+        order = ["??", "?", "?!", "!?", "!", "!!", "OK"]
+        return ui.tags.table(
+            {"class": "table table-sm text-center mb-0"},
+            ui.tags.thead(ui.tags.tr(*[ui.tags.th(label) for label in order])),
+            ui.tags.tbody(
+                ui.tags.tr(*[ui.tags.td(str(summary.get(label, 0))) for label in order])
+            ),
+        )
+
+    @output
+    @render.ui
     def move_list():
         sans = sans_val()
         if not sans:
@@ -389,6 +527,7 @@ def server(input, output, session):
 
         rows = move_rows(sans)
         current_ply = ply_val()
+        annotations = annotations_val()
         table_rows = []
 
         for row_index, (move_no, white, black) in enumerate(rows):
@@ -398,19 +537,23 @@ def server(input, output, session):
             white_attrs = {"data-ply": str(white_ply)}
             if white_ply == current_ply:
                 white_attrs["class"] = "is-selected"
+            white_label = annotations.get(white_ply, "")
+            white_text = f"{white} {white_label}".rstrip()
 
             if black:
                 black_attrs = {"data-ply": str(black_ply)}
                 if black_ply == current_ply:
                     black_attrs["class"] = "is-selected"
-                black_cell = ui.tags.td(black, **black_attrs)
+                black_label = annotations.get(black_ply, "")
+                black_text = f"{black} {black_label}".rstrip()
+                black_cell = ui.tags.td(black_text, **black_attrs)
             else:
                 black_cell = ui.tags.td("")
 
             table_rows.append(
                 ui.tags.tr(
                     ui.tags.td(str(move_no)),
-                    ui.tags.td(white, **white_attrs),
+                    ui.tags.td(white_text, **white_attrs),
                     black_cell,
                 )
             )
