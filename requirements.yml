@@ -6,6 +6,9 @@ dependencies:
   - python=3.12
   - shiny
   - chess
+  - pandas
   - pydantic
   - pytest
   - ruff
+  - pip:
+    - shinyswatch==0.9.0
