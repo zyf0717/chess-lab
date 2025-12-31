@@ -187,6 +187,16 @@ def score_to_cp(score: chess.engine.PovScore, mate_score: int = 10000) -> int:
         return 0
     return int(value)
 
+
+def clamp_score(score_cp: int, threshold: int = 1000) -> int:
+    return max(-threshold, min(score_cp, threshold))
+
+
+def format_cp(score_cp: int) -> str:
+    value = score_cp / 100.0
+    sign = "+" if value >= 0 else ""
+    return f"{sign}{value:.2f}"
+
 class StockfishAnalyzer:
     def __init__(self, path: Path):
         self._engine = chess.engine.SimpleEngine.popen_uci(str(path))
@@ -209,6 +219,7 @@ def stream_analysis(
     depth: int | None = None,
     multipv: int = 3,
     stop_event=None,
+    best_move_board: chess.Board | None = None,
 ):
     path = ensure_stockfish_binary()
     engine = chess.engine.SimpleEngine.popen_uci(str(path))
@@ -218,25 +229,48 @@ def stream_analysis(
         else:
             limit = chess.engine.Limit(time=time_limit, depth=depth)
 
+        best_move_uci = None
+        if best_move_board is not None:
+            try:
+                best = engine.play(best_move_board, limit)
+                if best.move is not None:
+                    best_move_uci = best.move.uci()
+            except Exception:
+                best_move_uci = None
+
+        prev_cp = None
+        if best_move_board is not None:
+            try:
+                prev_info = engine.analyse(best_move_board, limit)
+                prev_score = prev_info["score"].pov(chess.WHITE)
+                prev_cp = clamp_score(score_to_cp(prev_score))
+            except Exception:
+                prev_cp = None
+
         start = time.monotonic()
         with engine.analysis(board, limit, multipv=multipv) as analysis:
-            latest: dict[int, tuple[str, str]] = {}
+            latest: dict[int, tuple[str, str, str | None]] = {}
             for info in analysis:
                 if stop_event is not None and stop_event.is_set():
                     analysis.stop()
                     break
                 if "score" in info and "pv" in info:
                     score = info["score"].pov(chess.WHITE)
+                    curr_cp = clamp_score(score_to_cp(score))
+                    delta_text = None
+                    if prev_cp is not None:
+                        delta_text = format_cp(curr_cp - prev_cp)
                     line_score = format_score(score)
                     line_pv = format_pv(board, info["pv"])
                     rank = int(info.get("multipv", 1))
-                    latest[rank] = (line_score, line_pv)
+                    first_move = info["pv"][0].uci() if info["pv"] else None
+                    latest[rank] = (line_score, line_pv, first_move)
                     ordered = [
                         f"{line_score} — {line_pv}"
-                        for _, (line_score, line_pv) in sorted(latest.items())
+                        for _, (line_score, line_pv, _) in sorted(latest.items())
                     ]
-                    best = latest.get(1, (line_score, line_pv))[0]
-                    yield best, ordered
+                    best_entry = latest.get(1, (line_score, line_pv, first_move))
+                    yield delta_text, ordered, best_move_uci or best_entry[2]
                 if time.monotonic() - start >= time_limit:
                     break
     finally:

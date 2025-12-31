@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import chess
 import chess.pgn
 import chess.svg
-from analysis.stockfish import evaluate_positions, stream_analysis
+from analysis.stockfish import clamp_score, evaluate_positions, stream_analysis
 from shiny import reactive, render, ui
 from shinyswatch import theme_picker_server
 
@@ -48,7 +48,7 @@ def server(input, output, session):
     moves_val = reactive.Value([])
     sans_val = reactive.Value([])
     ply_val = reactive.Value(0)
-    eval_val = reactive.Value("Eval: --")
+    eval_val = reactive.Value("Δ Eval: --")
     pv_val = reactive.Value([])
     analysis_ready = reactive.Value(False)
     annotations_val = reactive.Value({})
@@ -64,11 +64,14 @@ def server(input, output, session):
             "black_elo": "Unknown",
         }
     )
-    analysis_queue: queue.Queue[tuple[int, str, list[str]]] = queue.Queue()
+    analysis_queue: queue.Queue[
+        tuple[int, str | None, list[str], str | None]
+    ] = queue.Queue()
     analysis_thread: threading.Thread | None = None
     analysis_stop: threading.Event | None = None
     analysis_id = 0
     last_analysis_key: tuple[str, int, float] | None = None
+    engine_move_val = reactive.Value(None)
     annotation_queue: queue.Queue[
         tuple[int, dict[int, str], dict[str, dict[str, int]]]
     ] = queue.Queue()
@@ -172,10 +175,11 @@ def server(input, output, session):
             sans_val.set([])
             ply_val.set(0)
             analysis_ready.set(False)
-            eval_val.set("Eval: --")
+            eval_val.set("Δ Eval: --")
             pv_val.set([])
             annotations_val.set({})
             summary_val.set({})
+            engine_move_val.set(None)
             _set_game_info(None)
             return
 
@@ -187,10 +191,11 @@ def server(input, output, session):
             sans_val.set([])
             ply_val.set(0)
             analysis_ready.set(False)
-            eval_val.set("Eval: --")
+            eval_val.set("Δ Eval: --")
             pv_val.set([])
             annotations_val.set({})
             summary_val.set({})
+            engine_move_val.set(None)
             _set_game_info(None)
             return
 
@@ -201,6 +206,7 @@ def server(input, output, session):
         analysis_ready.set(True)
         annotations_val.set({})
         summary_val.set({})
+        engine_move_val.set(None)
         _set_game_info(game)
 
     @reactive.Effect
@@ -331,7 +337,9 @@ def server(input, output, session):
                 display_annotations: dict[int, str] = {}
                 cpl_by_ply: dict[int, int] = {}
                 for ply in range(1, len(evals)):
-                    delta = evals[ply] - evals[ply - 1]
+                    prev_cp = clamp_score(evals[ply - 1])
+                    curr_cp = clamp_score(evals[ply])
+                    delta = curr_cp - prev_cp
                     mover_is_white = (ply % 2) == 1
                     delta_for_mover = delta if mover_is_white else -delta
                     cpl = max(0, -int(delta_for_mover))
@@ -353,10 +361,9 @@ def server(input, output, session):
         )
         annotation_thread.start()
 
-    def _current_board() -> chess.Board:
+    def _board_at_ply(ply: int) -> chess.Board:
         game = game_val()
         moves = moves_val()
-        ply = ply_val()
         if game is None:
             board = chess.Board()
         else:
@@ -365,7 +372,10 @@ def server(input, output, session):
                 board.push(move)
         return board
 
-    def _start_streaming_eval(board: chess.Board) -> None:
+    def _current_board() -> chess.Board:
+        return _board_at_ply(ply_val())
+
+    def _start_streaming_eval(board: chess.Board, prev_fen: str | None) -> None:
         nonlocal analysis_id, analysis_stop, analysis_queue, analysis_thread, last_analysis_key
         try:
             multipv = int(input.multipv())
@@ -389,30 +399,40 @@ def server(input, output, session):
         if analysis_stop is not None:
             analysis_stop.set()
         analysis_stop = threading.Event()
-        local_queue: queue.Queue[tuple[int, str, list[str]]] = queue.Queue()
+        local_queue: queue.Queue[
+            tuple[int, str | None, list[str], str | None]
+        ] = queue.Queue()
         analysis_queue = local_queue
 
-        eval_val.set("Eval: …")
+        eval_val.set("Δ Eval: …")
         pv_val.set([])
+        engine_move_val.set(None)
 
-        def worker(fen_str: str, stop_event: threading.Event, out_queue: queue.Queue):
+        def worker(
+            fen_str: str,
+            prev_fen_str: str | None,
+            stop_event: threading.Event,
+            out_queue: queue.Queue,
+        ):
             try:
                 board_obj = chess.Board(fen_str)
-                for score, lines in stream_analysis(
+                prev_board = chess.Board(prev_fen_str) if prev_fen_str else None
+                for delta_text, lines, best_move in stream_analysis(
                     board_obj,
                     time_limit=think_time,
                     multipv=multipv,
                     stop_event=stop_event,
+                    best_move_board=prev_board,
                 ):
                     if stop_event.is_set():
                         break
-                    out_queue.put((current_id, f"Eval: {score}", lines))
+                    out_queue.put((current_id, delta_text, lines, best_move))
             except Exception as exc:
-                out_queue.put((current_id, f"Engine unavailable: {exc}", []))
+                out_queue.put((current_id, f"Engine unavailable: {exc}", [], None))
 
         analysis_thread = threading.Thread(
             target=worker,
-            args=(fen, analysis_stop, local_queue),
+            args=(fen, prev_fen, analysis_stop, local_queue),
             daemon=True,
         )
         analysis_thread.start()
@@ -426,26 +446,41 @@ def server(input, output, session):
         _ = input.multipv()
         _ = input.think_time()
         board = _current_board()
-        _start_streaming_eval(board)
+        ply = ply_val()
+        prev_fen = None
+        if ply > 0:
+            prev_fen = _board_at_ply(ply - 1).fen()
+        _start_streaming_eval(board, prev_fen)
 
     @reactive.Effect
     def _drain_eval_queue():
         nonlocal analysis_queue, analysis_id
         reactive.invalidate_later(0.2)
+        latest_set = False
         latest = None
         latest_lines = None
+        latest_move = None
         while True:
             try:
-                message_id, message, lines = analysis_queue.get_nowait()
+                message_id, message, lines, best_move = analysis_queue.get_nowait()
             except queue.Empty:
                 break
             if message_id == analysis_id:
+                latest_set = True
                 latest = message
                 latest_lines = lines
-        if latest is not None:
-            eval_val.set(latest)
+                latest_move = best_move
+        if latest_set:
+            if isinstance(latest, str) and latest.startswith("Engine unavailable"):
+                eval_val.set(latest)
+            elif latest is None:
+                eval_val.set("Δ Eval: --")
+            else:
+                eval_val.set(f"Δ Eval: {latest}")
         if latest_lines is not None:
             pv_val.set(latest_lines)
+        if latest_move is not None:
+            engine_move_val.set(latest_move)
 
     @reactive.Effect
     def _drain_annotation_queue():
@@ -487,7 +522,33 @@ def server(input, output, session):
     @render.ui
     def board_view():
         board = _current_board()
-        svg = chess.svg.board(board=board, size=BOARD_SIZE)
+        arrows = []
+        moves = moves_val()
+        ply = ply_val()
+        if ply > 0 and ply <= len(moves):
+            last_move = moves[ply - 1]
+            arrows.append(
+                chess.svg.Arrow(
+                    last_move.from_square,
+                    last_move.to_square,
+                    color="#2f6f5e",
+                )
+            )
+        best_move_uci = engine_move_val()
+        if best_move_uci:
+            try:
+                best_move = chess.Move.from_uci(best_move_uci)
+                arrows.append(
+                    chess.svg.Arrow(
+                        best_move.from_square,
+                        best_move.to_square,
+                        color="#c64b2a",
+                    )
+                )
+            except ValueError:
+                pass
+
+        svg = chess.svg.board(board=board, size=BOARD_SIZE, arrows=arrows)
         return ui.HTML(svg)
 
     @output
