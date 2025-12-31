@@ -5,7 +5,6 @@ import io
 import chess
 import chess.pgn
 import chess.svg
-import pandas as pd
 from shiny import reactive, render, ui
 from shinyswatch import theme_picker_server
 
@@ -68,7 +67,7 @@ def server(input, output, session):
 
         try:
             game, moves, sans = parse_pgn(pgn_text)
-        except ValueError as exc:
+        except ValueError as e:
             game_val.set(None)
             moves_val.set([])
             sans_val.set([])
@@ -105,37 +104,21 @@ def server(input, output, session):
     def _last_move():
         ply_val.set(len(moves_val()))
 
-    def _selected_rows():
-        for attr in (
-            "move_list_selected_rows",
-            "move_list_rows_selected",
-            "move_list_selected_row",
-        ):
-            getter = getattr(input, attr, None)
-            if getter is None:
-                continue
-            value = getter()
-            if value is None:
-                continue
-            if isinstance(value, (list, tuple)):
-                return value
-            return [value]
-        return []
-
     @reactive.Effect
-    def _jump_to_selected_row():
-        selected = _selected_rows()
-        if not selected:
+    def _jump_to_selected_cell():
+        payload = input.move_cell()
+        if not payload or not isinstance(payload, dict):
             return
+        ply = payload.get("ply")
         try:
-            row_index = int(selected[0])
-        except (TypeError, ValueError, IndexError):
+            ply = int(ply)
+        except (TypeError, ValueError):
             return
 
         total = len(moves_val())
-        target_ply = min(total, (row_index + 1) * 2)
-        if target_ply != ply_val():
-            ply_val.set(target_ply)
+        ply = max(0, min(ply, total))
+        if ply != ply_val():
+            ply_val.set(ply)
 
     @output
     @render.ui
@@ -154,14 +137,48 @@ def server(input, output, session):
         return ui.HTML(svg)
 
     @output
-    @render.data_frame
+    @render.ui
     def move_list():
         sans = sans_val()
-
         if not sans:
-            empty = pd.DataFrame(columns=["#", "White", "Black"])
-            return render.DataGrid(empty, selection_mode="row")
+            return ui.p("No moves loaded.", class_="text-muted")
 
         rows = move_rows(sans)
-        data = pd.DataFrame(rows, columns=["#", "White", "Black"])
-        return render.DataGrid(data, selection_mode="row")
+        current_ply = ply_val()
+        table_rows = []
+
+        for row_index, (move_no, white, black) in enumerate(rows):
+            white_ply = row_index * 2 + 1
+            black_ply = row_index * 2 + 2
+
+            white_attrs = {"data-ply": str(white_ply)}
+            if white_ply == current_ply:
+                white_attrs["class"] = "is-selected"
+
+            if black:
+                black_attrs = {"data-ply": str(black_ply)}
+                if black_ply == current_ply:
+                    black_attrs["class"] = "is-selected"
+                black_cell = ui.tags.td(black, **black_attrs)
+            else:
+                black_cell = ui.tags.td("")
+
+            table_rows.append(
+                ui.tags.tr(
+                    ui.tags.td(str(move_no)),
+                    ui.tags.td(white, **white_attrs),
+                    black_cell,
+                )
+            )
+
+        return ui.tags.table(
+            {"class": "table table-sm move-table"},
+            ui.tags.thead(
+                ui.tags.tr(
+                    ui.tags.th("#"),
+                    ui.tags.th("White"),
+                    ui.tags.th("Black"),
+                )
+            ),
+            ui.tags.tbody(*table_rows),
+        )

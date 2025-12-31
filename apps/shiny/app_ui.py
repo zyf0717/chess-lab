@@ -13,6 +13,54 @@ app_ui = ui.page_fluid(
             top: 0;
             background: inherit;
         }
+
+        .move-table td[data-ply] {
+            cursor: pointer;
+        }
+
+        .move-table td.is-selected {
+            background-color: var(--bs-primary-bg-subtle, #e6eefb);
+            color: var(--bs-body-color, inherit);
+            box-shadow: inset 0 0 0 2px var(--bs-primary, #0d6efd);
+        }
+
+        .move-table td[data-ply]:hover {
+            background-color: var(--bs-secondary-bg, rgba(0, 0, 0, 0.05));
+        }
+
+        [data-bs-theme="dark"] .move-table td.is-selected,
+        .bslib-dark .move-table td.is-selected {
+            background-color: transparent;
+            box-shadow: inset 0 0 0 2px rgba(110, 168, 254, 0.85);
+        }
+
+        [data-bs-theme="dark"] .move-table td[data-ply]:hover,
+        .bslib-dark .move-table td[data-ply]:hover {
+            background-color: rgba(13, 110, 253, 0.2);
+        }
+        """
+    ),
+    ui.tags.script(
+        """
+        document.addEventListener("click", (event) => {
+            const cell = event.target.closest("td[data-ply]");
+            if (!cell) return;
+
+            const table = cell.closest("table");
+            if (table) {
+                table.querySelectorAll("td.is-selected").forEach((td) => {
+                    td.classList.remove("is-selected");
+                });
+            }
+
+            cell.classList.add("is-selected");
+            const ply = parseInt(cell.dataset.ply, 10);
+            if (Number.isNaN(ply)) return;
+
+            if (window.Shiny && Shiny.setInputValue) {
+                Shiny.setInputValue("move_cell", { ply: ply }, { priority: "event" });
+            }
+        });
         """
     ),
     ui.navset_bar(
@@ -49,7 +97,7 @@ app_ui = ui.page_fluid(
                         4,
                         ui.card(
                             ui.card_header("Moves"),
-                            ui.output_data_frame("move_list"),
+                            ui.output_ui("move_list"),
                         ),
                     ),
                 ),
