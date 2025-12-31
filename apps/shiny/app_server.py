@@ -105,6 +105,7 @@ def server(input, output, session):
         ply_val.set(len(moves_val()))
 
     @reactive.Effect
+    @reactive.event(input.move_cell)
     def _jump_to_selected_cell():
         payload = input.move_cell()
         if not payload or not isinstance(payload, dict):
