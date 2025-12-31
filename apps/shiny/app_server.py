@@ -53,6 +53,7 @@ def server(input, output, session):
     analysis_ready = reactive.Value(False)
     annotations_val = reactive.Value({})
     summary_val = reactive.Value({})
+    annotation_status = reactive.Value("idle")
     info_val = reactive.Value(
         {
             "start": "Unknown",
@@ -64,9 +65,9 @@ def server(input, output, session):
             "black_elo": "Unknown",
         }
     )
-    analysis_queue: queue.Queue[
-        tuple[int, str | None, list[str], str | None]
-    ] = queue.Queue()
+    analysis_queue: queue.Queue[tuple[int, str | None, list[str], str | None]] = (
+        queue.Queue()
+    )
     analysis_thread: threading.Thread | None = None
     analysis_stop: threading.Event | None = None
     analysis_id = 0
@@ -179,6 +180,7 @@ def server(input, output, session):
             pv_val.set([])
             annotations_val.set({})
             summary_val.set({})
+            annotation_status.set("idle")
             engine_move_val.set(None)
             _set_game_info(None)
             return
@@ -195,6 +197,7 @@ def server(input, output, session):
             pv_val.set([])
             annotations_val.set({})
             summary_val.set({})
+            annotation_status.set("idle")
             engine_move_val.set(None)
             _set_game_info(None)
             return
@@ -206,6 +209,7 @@ def server(input, output, session):
         analysis_ready.set(True)
         annotations_val.set({})
         summary_val.set({})
+        annotation_status.set("idle")
         engine_move_val.set(None)
         _set_game_info(game)
 
@@ -259,7 +263,7 @@ def server(input, output, session):
 
     def _summarize_annotations(
         annotations: dict[int, str],
-        cpl_by_ply: dict[int, int],
+        cpl_by_ply: dict[int, float],
         total_plies: int,
     ) -> dict[str, dict[str, int | float]]:
         labels = ["??", "?", "?!"]
@@ -320,6 +324,7 @@ def server(input, output, session):
         annotation_queue = local_queue
         annotation_id += 1
         current_id = annotation_id
+        annotation_status.set("running")
 
         def worker(
             base_fen: str,
@@ -330,26 +335,30 @@ def server(input, output, session):
         ):
             try:
                 base_board = chess.Board(base_fen)
-                evals = evaluate_positions(base_board, move_list, time_limit=time_limit, stop_event=stop_event)
+                evals = evaluate_positions(
+                    base_board, move_list, time_limit=time_limit, stop_event=stop_event
+                )
                 if stop_event.is_set() or len(evals) <= 1:
                     return
                 label_annotations: dict[int, str] = {}
                 display_annotations: dict[int, str] = {}
-                cpl_by_ply: dict[int, int] = {}
+                cpl_by_ply: dict[int, float] = {}
                 for ply in range(1, len(evals)):
                     prev_cp = clamp_score(evals[ply - 1])
                     curr_cp = clamp_score(evals[ply])
                     delta = curr_cp - prev_cp
+                    delta_white = delta / 100.0
                     mover_is_white = (ply % 2) == 1
                     delta_for_mover = delta if mover_is_white else -delta
-                    cpl = max(0, -int(delta_for_mover))
-                    cpl_by_ply[ply] = cpl
+                    cpl_cp = max(0, -int(delta_for_mover))
+                    cpl_by_ply[ply] = cpl_cp / 100.0
                     label = _classify_delta(delta_for_mover)
                     if label:
-                        signed = int(delta_for_mover)
-                        display_annotations[ply] = f"{label} ({signed})"
+                        display_annotations[ply] = f"{label} ({delta_white:+.2f})"
                         label_annotations[ply] = label
-                summary = _summarize_annotations(label_annotations, cpl_by_ply, len(move_list))
+                summary = _summarize_annotations(
+                    label_annotations, cpl_by_ply, len(move_list)
+                )
                 out_queue.put((current_id, display_annotations, summary))
             except Exception:
                 out_queue.put((current_id, {}, {}))
@@ -399,9 +408,9 @@ def server(input, output, session):
         if analysis_stop is not None:
             analysis_stop.set()
         analysis_stop = threading.Event()
-        local_queue: queue.Queue[
-            tuple[int, str | None, list[str], str | None]
-        ] = queue.Queue()
+        local_queue: queue.Queue[tuple[int, str | None, list[str], str | None]] = (
+            queue.Queue()
+        )
         analysis_queue = local_queue
 
         eval_val.set("Δ Eval: …")
@@ -500,6 +509,7 @@ def server(input, output, session):
             annotations_val.set(latest_annotations)
         if latest_summary is not None:
             summary_val.set(latest_summary)
+            annotation_status.set("idle")
 
     @reactive.Effect
     @reactive.event(input.move_cell)
@@ -593,7 +603,10 @@ def server(input, output, session):
     @output
     @render.ui
     def move_summary():
+        status = annotation_status()
         summary = summary_val()
+        if status == "running" and not summary:
+            return ui.p("Analyzing...", class_="text-muted")
         if not summary:
             return ui.p("No annotations yet.", class_="text-muted")
         order = ["??", "?", "?!", "OK"]
@@ -601,7 +614,14 @@ def server(input, output, session):
         black_counts = summary.get("Black", {})
         white_avg = float(white_counts.get("avg_cpl", 0.0))
         black_avg = float(black_counts.get("avg_cpl", 0.0))
-        return ui.tags.table(
+        white_avg_cpl = round(white_avg * 100)
+        black_avg_cpl = round(black_avg * 100)
+        note = (
+            ui.p("Analyzing...", class_="text-muted mb-1")
+            if status == "running"
+            else None
+        )
+        table = ui.tags.table(
             {"class": "table table-sm text-center mb-0"},
             ui.tags.thead(
                 ui.tags.tr(
@@ -614,15 +634,18 @@ def server(input, output, session):
                 ui.tags.tr(
                     ui.tags.td("White"),
                     *[ui.tags.td(str(white_counts.get(label, 0))) for label in order],
-                    ui.tags.td(f"{white_avg:.1f}"),
+                    ui.tags.td(str(white_avg_cpl)),
                 ),
                 ui.tags.tr(
                     ui.tags.td("Black"),
                     *[ui.tags.td(str(black_counts.get(label, 0))) for label in order],
-                    ui.tags.td(f"{black_avg:.1f}"),
+                    ui.tags.td(str(black_avg_cpl)),
                 ),
             ),
         )
+        if note is None:
+            return table
+        return ui.tags.div(note, table)
 
     @output
     @render.ui
