@@ -4,6 +4,7 @@ import os
 import platform
 import stat
 import tarfile
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -164,6 +165,21 @@ def format_score(score: chess.engine.PovScore) -> str:
     return f"{sign}{value:.2f}"
 
 
+def format_pv(board: chess.Board, pv: list[chess.Move], max_plies: int = 16) -> str:
+    temp = board.copy()
+    parts = []
+    for idx, move in enumerate(pv[:max_plies]):
+        san = temp.san(move)
+        if temp.turn == chess.WHITE:
+            parts.append(f"{temp.fullmove_number}. {san}")
+        else:
+            if idx == 0:
+                parts.append(f"{temp.fullmove_number}... {san}")
+            else:
+                parts.append(san)
+        temp.push(move)
+    return " ".join(parts)
+
 class StockfishAnalyzer:
     def __init__(self, path: Path):
         self._engine = chess.engine.SimpleEngine.popen_uci(str(path))
@@ -178,3 +194,43 @@ class StockfishAnalyzer:
 
     def close(self) -> None:
         self._engine.quit()
+
+
+def stream_analysis(
+    board: chess.Board,
+    time_limit: float = 5.0,
+    depth: int | None = None,
+    multipv: int = 3,
+    stop_event=None,
+):
+    path = ensure_stockfish_binary()
+    engine = chess.engine.SimpleEngine.popen_uci(str(path))
+    try:
+        if depth is None:
+            limit = chess.engine.Limit(time=time_limit)
+        else:
+            limit = chess.engine.Limit(time=time_limit, depth=depth)
+
+        start = time.monotonic()
+        with engine.analysis(board, limit, multipv=multipv) as analysis:
+            latest: dict[int, tuple[str, str]] = {}
+            for info in analysis:
+                if stop_event is not None and stop_event.is_set():
+                    analysis.stop()
+                    break
+                if "score" in info and "pv" in info:
+                    score = info["score"].pov(chess.WHITE)
+                    line_score = format_score(score)
+                    line_pv = format_pv(board, info["pv"])
+                    rank = int(info.get("multipv", 1))
+                    latest[rank] = (line_score, line_pv)
+                    ordered = [
+                        f"{line_score} — {line_pv}"
+                        for _, (line_score, line_pv) in sorted(latest.items())
+                    ]
+                    best = latest.get(1, (line_score, line_pv))[0]
+                    yield best, ordered
+                if time.monotonic() - start >= time_limit:
+                    break
+    finally:
+        engine.quit()

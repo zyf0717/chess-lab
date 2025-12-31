@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import io
+import queue
+import threading
 
 import chess
 import chess.pgn
 import chess.svg
+from analysis.stockfish import stream_analysis
 from shiny import reactive, render, ui
 from shinyswatch import theme_picker_server
 
-from analysis.stockfish import StockfishAnalyzer, ensure_stockfish_binary
-
-BOARD_SIZE = 480
+BOARD_SIZE = 360
 
 
 def parse_pgn(pgn_text: str):
@@ -47,34 +48,21 @@ def server(input, output, session):
     sans_val = reactive.Value([])
     ply_val = reactive.Value(0)
     eval_val = reactive.Value("Eval: --")
-    engine_val = reactive.Value(None)
-    engine_error = reactive.Value(None)
+    pv_val = reactive.Value([])
+    analysis_ready = reactive.Value(False)
+    analysis_queue: queue.Queue[tuple[int, str]] = queue.Queue()
+    analysis_thread: threading.Thread | None = None
+    analysis_stop: threading.Event | None = None
+    analysis_id = 0
+    last_analysis_key: tuple[str, int, float] | None = None
 
-    def _get_analyzer() -> StockfishAnalyzer:
-        error = engine_error()
-        if error:
-            raise RuntimeError(error)
+    def _shutdown_analysis() -> None:
+        if analysis_stop is not None:
+            analysis_stop.set()
+        if analysis_thread is not None and analysis_thread.is_alive():
+            analysis_thread.join(timeout=1.0)
 
-        analyzer = engine_val()
-        if analyzer is not None:
-            return analyzer
-
-        try:
-            path = ensure_stockfish_binary()
-        except RuntimeError as exc:
-            engine_error.set(str(exc))
-            raise
-
-        analyzer = StockfishAnalyzer(path)
-        engine_val.set(analyzer)
-        return analyzer
-
-    def _shutdown_engine() -> None:
-        analyzer = engine_val()
-        if analyzer is not None:
-            analyzer.close()
-
-    session.on_ended(_shutdown_engine)
+    session.on_ended(_shutdown_analysis)
 
     @reactive.Effect
     @reactive.event(input.analyze)
@@ -94,6 +82,9 @@ def server(input, output, session):
             moves_val.set([])
             sans_val.set([])
             ply_val.set(0)
+            analysis_ready.set(False)
+            eval_val.set("Eval: --")
+            pv_val.set([])
             return
 
         try:
@@ -103,12 +94,16 @@ def server(input, output, session):
             moves_val.set([])
             sans_val.set([])
             ply_val.set(0)
+            analysis_ready.set(False)
+            eval_val.set("Eval: --")
+            pv_val.set([])
             return
 
         game_val.set(game)
         moves_val.set(moves)
         sans_val.set(sans)
         ply_val.set(0)
+        analysis_ready.set(True)
 
     @reactive.Effect
     @reactive.event(input.prev_move)
@@ -147,23 +142,85 @@ def server(input, output, session):
                 board.push(move)
         return board
 
+    def _start_streaming_eval(board: chess.Board) -> None:
+        nonlocal analysis_id, analysis_stop, analysis_queue, analysis_thread, last_analysis_key
+        try:
+            multipv = int(input.multipv())
+        except (TypeError, ValueError):
+            multipv = 3
+        multipv = max(1, min(multipv, 8))
+        try:
+            think_time = float(input.think_time())
+        except (TypeError, ValueError):
+            think_time = 5.0
+        think_time = max(1.0, min(think_time, 60.0))
+        fen = board.fen()
+        analysis_key = (fen, multipv, think_time)
+        if analysis_key == last_analysis_key:
+            return
+
+        last_analysis_key = analysis_key
+        analysis_id += 1
+        current_id = analysis_id
+
+        if analysis_stop is not None:
+            analysis_stop.set()
+        analysis_stop = threading.Event()
+        local_queue: queue.Queue[tuple[int, str]] = queue.Queue()
+        analysis_queue = local_queue
+
+        eval_val.set("Eval: …")
+        pv_val.set([])
+
+        def worker(fen_str: str, stop_event: threading.Event, out_queue: queue.Queue):
+            try:
+                board_obj = chess.Board(fen_str)
+                for score, lines in stream_analysis(
+                    board_obj,
+                    time_limit=think_time,
+                    multipv=multipv,
+                    stop_event=stop_event,
+                ):
+                    if stop_event.is_set():
+                        break
+                    out_queue.put((current_id, f"Eval: {score}", lines))
+            except Exception as exc:
+                out_queue.put((current_id, f"Engine unavailable: {exc}", []))
+
+        analysis_thread = threading.Thread(
+            target=worker,
+            args=(fen, analysis_stop, local_queue),
+            daemon=True,
+        )
+        analysis_thread.start()
+
     @reactive.Effect
-    def _update_eval():
+    def _trigger_eval():
+        if not analysis_ready():
+            return
         _ = ply_val()
+        _ = moves_val()
         board = _current_board()
-        try:
-            analyzer = _get_analyzer()
-        except RuntimeError as exc:
-            eval_val.set(f"Engine unavailable: {exc}")
-            return
+        _start_streaming_eval(board)
 
-        try:
-            evaluation = analyzer.analyse(board)
-        except Exception as exc:
-            eval_val.set(f"Engine error: {exc}")
-            return
-
-        eval_val.set(f"Eval: {evaluation}")
+    @reactive.Effect
+    def _drain_eval_queue():
+        nonlocal analysis_queue, analysis_id
+        reactive.invalidate_later(0.2)
+        latest = None
+        latest_lines = None
+        while True:
+            try:
+                message_id, message, lines = analysis_queue.get_nowait()
+            except queue.Empty:
+                break
+            if message_id == analysis_id:
+                latest = message
+                latest_lines = lines
+        if latest is not None:
+            eval_val.set(latest)
+        if latest_lines is not None:
+            pv_val.set(latest_lines)
 
     @reactive.Effect
     @reactive.event(input.move_cell)
@@ -193,6 +250,14 @@ def server(input, output, session):
     @render.text
     def eval_line():
         return eval_val()
+
+    @output
+    @render.ui
+    def pv_lines():
+        lines = pv_val()
+        if not lines:
+            return ui.p("Top lines will appear here.", class_="text-muted")
+        return ui.tags.ol(*[ui.tags.li(line) for line in lines], class_="mb-0")
 
     @output
     @render.ui

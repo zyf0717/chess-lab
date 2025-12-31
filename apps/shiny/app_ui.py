@@ -6,7 +6,7 @@ app_ui = ui.page_fluid(
     ui.tags.style(
         """
         :root {
-            --board-size: 480px;
+            --board-size: 360px;
         }
 
         /* Make the sidebar independently scrollable */
@@ -115,7 +115,19 @@ app_ui = ui.page_fluid(
                         "Or paste PGN:",
                         rows=8,
                     ),
-                    ui.input_action_button("analyze", "Analyse"),
+                    ui.input_select(
+                        "multipv",
+                        "Engine lines",
+                        choices=[str(value) for value in range(1, 9)],
+                        selected="3",
+                    ),
+                    ui.input_select(
+                        "think_time",
+                        "Engine time (seconds)",
+                        choices=["1", "3", "5", "10", "30", "60"],
+                        selected="5",
+                    ),
+                    ui.input_action_button("analyze", "Start Analysis"),
                     ui.hr(),
                     theme_picker_ui(),
                 ),
@@ -133,6 +145,7 @@ app_ui = ui.page_fluid(
                                 class_="d-flex justify-content-center gap-2 mt-2",
                             ),
                             ui.output_text("eval_line"),
+                            ui.output_ui("pv_lines"),
                         ),
                     ),
                     ui.column(
