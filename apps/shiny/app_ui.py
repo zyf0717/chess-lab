@@ -44,6 +44,14 @@ app_ui = ui.page_fluid(
             background-color: var(--bs-secondary-bg, rgba(0, 0, 0, 0.05));
         }
 
+        line.arrow {
+            opacity: 0.7;
+        }
+
+        polygon.arrow {
+            opacity: 0.7;
+        }
+
         [data-bs-theme="dark"] .move-table td.is-selected,
         .bslib-dark .move-table td.is-selected {
             background-color: transparent;
