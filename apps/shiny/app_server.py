@@ -4,6 +4,7 @@ import io
 import math
 import queue
 import threading
+import time
 from datetime import datetime, timedelta
 
 import chess
@@ -317,6 +318,11 @@ def server(input, output, session):
         except (TypeError, ValueError):
             think_time = 1.0
         think_time = max(0.1, min(think_time, 60.0))
+        try:
+            thread_count = int(input.annotation_threads())
+        except (TypeError, ValueError):
+            thread_count = 1
+        thread_count = max(1, min(thread_count, 8))
 
         if annotation_stop is not None:
             annotation_stop.set()
@@ -327,6 +333,7 @@ def server(input, output, session):
         annotation_queue = local_queue
         annotation_id += 1
         current_id = annotation_id
+        summary_val.set({})
         annotation_status.set("running")
 
         def worker(
@@ -335,11 +342,17 @@ def server(input, output, session):
             stop_event: threading.Event,
             out_queue: queue.Queue,
             time_limit: float,
+            worker_count: int,
         ):
             try:
+                start_time = time.monotonic()
                 base_board = chess.Board(base_fen)
                 evals = evaluate_positions(
-                    base_board, move_list, time_limit=time_limit, stop_event=stop_event
+                    base_board,
+                    move_list,
+                    time_limit=time_limit,
+                    workers=worker_count,
+                    stop_event=stop_event,
                 )
                 if stop_event.is_set() or len(evals) <= 1:
                     return
@@ -361,13 +374,21 @@ def server(input, output, session):
                 summary = _summarize_annotations(
                     label_annotations, cpl_by_ply, len(move_list)
                 )
+                summary["meta"] = {"duration_sec": time.monotonic() - start_time}
                 out_queue.put((current_id, display_annotations, summary))
             except Exception:
                 out_queue.put((current_id, {}, {}))
 
         annotation_thread = threading.Thread(
             target=worker,
-            args=(game.board().fen(), moves, annotation_stop, local_queue, think_time),
+            args=(
+                game.board().fen(),
+                moves,
+                annotation_stop,
+                local_queue,
+                think_time,
+                thread_count,
+            ),
             daemon=True,
         )
         annotation_thread.start()
@@ -749,6 +770,16 @@ def server(input, output, session):
             if status == "running"
             else None
         )
+        meta = summary.get("meta", {}) if isinstance(summary, dict) else {}
+        duration = meta.get("duration_sec")
+        footnote = (
+            ui.tags.div(
+                f"Analysis completed in {float(duration):.2f} seconds.",
+                class_="text-muted small mt-1 fst-italic",
+            )
+            if duration is not None
+            else None
+        )
         table = ui.tags.table(
             {"class": "table table-sm text-center mb-0"},
             ui.tags.thead(
@@ -774,9 +805,9 @@ def server(input, output, session):
                 ),
             ),
         )
-        if note is None:
+        if note is None and footnote is None:
             return table
-        return ui.tags.div(note, table)
+        return ui.tags.div(*(value for value in (note, table, footnote) if value))
 
     @output
     @render.ui

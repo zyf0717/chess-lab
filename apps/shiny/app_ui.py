@@ -147,6 +147,12 @@ app_ui = ui.page_fluid(
                         choices=["0.3", "1", "3", "10"],
                         selected="0.3",
                     ),
+                    ui.input_select(
+                        "annotation_threads",
+                        "Annotation threads:",
+                        choices=[str(value) for value in range(1, 9)],
+                        selected="1",
+                    ),
                     ui.input_action_button("annotate_moves", "Annotate Game"),
                     ui.hr(),
                     theme_picker_ui(),

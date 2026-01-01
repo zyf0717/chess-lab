@@ -7,6 +7,7 @@ import tarfile
 import time
 import urllib.request
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import chess
@@ -311,22 +312,77 @@ def evaluate_positions(
     board: chess.Board,
     moves: list[chess.Move],
     time_limit: float = 1.0,
+    workers: int = 1,
     stop_event=None,
 ) -> list[int]:
+    if stop_event is not None and stop_event.is_set():
+        return []
+
     path = ensure_stockfish_binary()
-    engine = chess.engine.SimpleEngine.popen_uci(str(path))
-    try:
-        limit = chess.engine.Limit(time=time_limit)
-        evals: list[int] = []
-        work_board = board.copy()
-        info = engine.analyse(work_board, limit)
-        evals.append(score_to_cp(info["score"].pov(chess.WHITE)))
-        for move in moves:
-            if stop_event is not None and stop_event.is_set():
-                break
-            work_board.push(move)
+    workers = max(1, int(workers))
+    if workers <= 1:
+        engine = chess.engine.SimpleEngine.popen_uci(str(path))
+        try:
+            limit = chess.engine.Limit(time=time_limit)
+            evals: list[int] = []
+            work_board = board.copy()
             info = engine.analyse(work_board, limit)
             evals.append(score_to_cp(info["score"].pov(chess.WHITE)))
-        return evals
-    finally:
-        engine.quit()
+            for move in moves:
+                if stop_event is not None and stop_event.is_set():
+                    break
+                work_board.push(move)
+                info = engine.analyse(work_board, limit)
+                evals.append(score_to_cp(info["score"].pov(chess.WHITE)))
+            return evals
+        finally:
+            engine.quit()
+
+    work_board = board.copy()
+    fen_items: list[tuple[int, str]] = [(0, work_board.fen())]
+    for idx, move in enumerate(moves, start=1):
+        if stop_event is not None and stop_event.is_set():
+            return []
+        work_board.push(move)
+        fen_items.append((idx, work_board.fen()))
+
+    if not fen_items:
+        return []
+
+    workers = min(workers, len(fen_items))
+    chunk_size = (len(fen_items) + workers - 1) // workers
+    chunks = [
+        fen_items[i : i + chunk_size] for i in range(0, len(fen_items), chunk_size)
+    ]
+
+    def _analyse_fens(
+        fen_batch: list[tuple[int, str]],
+    ) -> list[tuple[int, int]]:
+        engine = chess.engine.SimpleEngine.popen_uci(str(path))
+        try:
+            try:
+                engine.configure({"Threads": 1})
+            except Exception:
+                pass
+            limit = chess.engine.Limit(time=time_limit)
+            results: list[tuple[int, int]] = []
+            for idx, fen in fen_batch:
+                if stop_event is not None and stop_event.is_set():
+                    break
+                board_obj = chess.Board(fen)
+                info = engine.analyse(board_obj, limit)
+                results.append((idx, score_to_cp(info["score"].pov(chess.WHITE))))
+            return results
+        finally:
+            engine.quit()
+
+    results_by_idx: dict[int, int] = {}
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(_analyse_fens, chunk) for chunk in chunks]
+        for future in as_completed(futures):
+            if stop_event is not None and stop_event.is_set():
+                return []
+            for idx, score in future.result():
+                results_by_idx[idx] = score
+
+    return [results_by_idx.get(idx, 0) for idx in range(len(fen_items))]
