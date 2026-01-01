@@ -213,3 +213,7 @@ engines/
 # Data
 data/
 *.pgn
+
+# CRON jobs
+cron.sh
+nohup.out
