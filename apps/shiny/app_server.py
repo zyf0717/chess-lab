@@ -6,16 +6,29 @@ import threading
 import chess
 import chess.svg
 import plotly.graph_objects as go
-from analysis_engine import (
+from analysis import (
     annotate_game_worker,
     calculate_estimated_elo,
     classify_delta,
     stream_analysis_worker,
 )
-from game_utils import board_at_ply, extract_game_info, move_rows, parse_pgn
 from shiny import reactive, render, ui
 from shinyswatch import theme_picker_server
 from shinywidgets import render_widget
+from utils import (
+    board_at_ply,
+    create_eval_graph,
+    extract_game_info,
+    format_eval_line,
+    get_input_params,
+    move_rows,
+    parse_pgn,
+    render_game_info_table,
+    render_move_list,
+    render_pv_list,
+    render_summary_table,
+    reset_game_state,
+)
 
 BOARD_SIZE = 360
 
@@ -79,38 +92,30 @@ def server(input, output, session):
         info_val.set(extract_game_info(game))
 
     def _load_pgn(pgn_text: str) -> None:
+        reactive_vals = {
+            "game": game_val,
+            "moves": moves_val,
+            "sans": sans_val,
+            "ply": ply_val,
+            "analysis_ready": analysis_ready,
+            "eval": eval_val,
+            "pv": pv_val,
+            "annotations": annotations_val,
+            "summary": summary_val,
+            "annotation_status": annotation_status,
+            "evals": evals_val,
+            "engine_move": engine_move_val,
+            "info": info_val,
+        }
+
         if not pgn_text.strip():
-            game_val.set(None)
-            moves_val.set([])
-            sans_val.set([])
-            ply_val.set(0)
-            analysis_ready.set(False)
-            eval_val.set("CPL: --")
-            pv_val.set([])
-            annotations_val.set({})
-            summary_val.set({})
-            annotation_status.set("idle")
-            evals_val.set([])
-            engine_move_val.set(None)
-            _set_game_info(None)
+            reset_game_state(reactive_vals)
             return
 
         try:
             game, moves, sans = parse_pgn(pgn_text)
         except ValueError:
-            game_val.set(None)
-            moves_val.set([])
-            sans_val.set([])
-            ply_val.set(0)
-            analysis_ready.set(False)
-            eval_val.set("CPL: --")
-            pv_val.set([])
-            annotations_val.set({})
-            summary_val.set({})
-            annotation_status.set("idle")
-            evals_val.set([])
-            engine_move_val.set(None)
-            _set_game_info(None)
+            reset_game_state(reactive_vals)
             return
 
         game_val.set(game)
@@ -183,16 +188,9 @@ def server(input, output, session):
             evals_val.set([])
             return
 
-        try:
-            think_time = float(input.think_time())
-        except (TypeError, ValueError):
-            think_time = 1.0
-        think_time = max(0.1, min(think_time, 60.0))
-        try:
-            thread_count = int(input.engine_threads())
-        except (TypeError, ValueError):
-            thread_count = 1
-        thread_count = max(1, min(thread_count, 8))
+        params = get_input_params(input)
+        think_time = params["think_time"]
+        thread_count = params["threads"]
 
         if annotation_stop is not None:
             annotation_stop.set()
@@ -239,21 +237,10 @@ def server(input, output, session):
         board: chess.Board, prev_fen: str | None, mover_is_white: bool
     ) -> None:
         nonlocal analysis_id, analysis_stop, analysis_queue, analysis_thread, last_analysis_key
-        try:
-            multipv = int(input.multipv())
-        except (TypeError, ValueError):
-            multipv = 3
-        multipv = max(1, min(multipv, 8))
-        try:
-            engine_threads = int(input.engine_threads())
-        except (TypeError, ValueError):
-            engine_threads = 1
-        engine_threads = max(1, min(engine_threads, 8))
-        try:
-            think_time = float(input.think_time())
-        except (TypeError, ValueError):
-            think_time = 5.0
-        think_time = max(0.1, min(think_time, 60.0))
+        params = get_input_params(input)
+        multipv = params["multipv"]
+        engine_threads = params["threads"]
+        think_time = params["think_time"]
         fen = board.fen()
         analysis_key = (fen, multipv, think_time, engine_threads)
         if analysis_key == last_analysis_key:
@@ -425,41 +412,13 @@ def server(input, output, session):
 
     @render.text
     def eval_line():
-        message = eval_val()
-        if isinstance(message, str) and message.startswith("Engine unavailable"):
-            return message
-
-        cpl_display = "--"
-        cpl_value = None
-        if isinstance(message, str) and message.startswith("CPL:"):
-            cpl_display = message.split(":", 1)[1].strip()
-        elif isinstance(message, str) and message:
-            cpl_display = message
-        try:
-            cpl_value = int(float(cpl_display))
-        except (TypeError, ValueError):
-            cpl_value = None
-
-        ply = ply_val()
-        sans = sans_val()
-        move_text = "--"
-        move_prefix = ""
-        annotation = ""
-        if ply > 0 and ply <= len(sans):
-            move_no = (ply + 1) // 2
-            move_prefix = f"{move_no}. " if (ply % 2) == 1 else f"{move_no}... "
-            move_text = sans[ply - 1]
-            annotation_text = annotations_val().get(ply, "")
-            label = ""
-            if annotation_text:
-                label = annotation_text.split()[0]
-            elif cpl_value is not None:
-                # classify_delta expects negative for bad moves
-                label = classify_delta(-cpl_value)
-            if label:
-                annotation = f" {label}"
-
-        return f"Move: {move_prefix}{move_text}{annotation} ({cpl_display})"
+        return format_eval_line(
+            eval_val(),
+            ply_val(),
+            sans_val(),
+            annotations_val(),
+            classify_delta,
+        )
 
     @render.ui
     def fen_line():
@@ -472,383 +431,73 @@ def server(input, output, session):
 
     @render.ui
     def game_info():
-        info = info_val()
-        return ui.tags.table(
-            {"class": "table table-sm text-center mb-0"},
-            ui.tags.thead(
-                ui.tags.tr(
-                    ui.tags.th("Start"),
-                    ui.tags.th("End"),
-                    ui.tags.th("Duration"),
-                    ui.tags.th("White (Elo)"),
-                    ui.tags.th("Black (Elo)"),
-                )
-            ),
-            ui.tags.tbody(
-                ui.tags.tr(
-                    ui.tags.td(info["start"]),
-                    ui.tags.td(info["end"]),
-                    ui.tags.td(info["duration"]),
-                    ui.tags.td(f"{info['white']} ({info['white_elo']})"),
-                    ui.tags.td(f"{info['black']} ({info['black_elo']})"),
-                )
-            ),
-        )
+        return render_game_info_table(info_val())
 
     @render.ui
     def pv():
-        lines = pv_val()
-        if not lines:
-            return ui.p("PV will appear here.", class_="text-muted")
-        highlight_ready = analysis_done()
-
-        def _normalize_san(value: str) -> str:
-            return value.rstrip("+#")
-
-        def _first_pv_move(pv_line: str) -> str | None:
-            _, sep, pv = pv_line.partition("—")
-            pv_part = pv.strip() if sep else pv_line.strip()
-            if not pv_part:
-                return None
-            tokens = pv_part.split()
-            if not tokens:
-                return None
-            if tokens[0].endswith(".") or tokens[0].endswith("..."):
-                return tokens[1] if len(tokens) > 1 else None
-            return tokens[0]
-
-        # Get the next move to be played
         ply = ply_val()
         sans = sans_val()
-        next_san = None
-        if ply < len(sans):
-            next_san = _normalize_san(sans[ply])
-
-        items = []
-        for line in lines:
-            first_move = _first_pv_move(line)
-            if next_san and first_move:
-                first_move = _normalize_san(first_move)
-            if highlight_ready and next_san and first_move == next_san:
-                items.append(ui.tags.li(line, class_="text-success"))
-            else:
-                items.append(ui.tags.li(line))
-
-        return ui.tags.div(
-            ui.tags.div("PV:", class_="text-muted small mb-0"),
-            ui.tags.ol(*items, class_="mb-0"),
+        next_san = sans[ply] if ply < len(sans) else None
+        return render_pv_list(
+            pv_val(),
+            next_san,
+            analysis_done(),
+            title="PV:",
+            empty_msg="PV will appear here.",
         )
 
     @render.ui
     def prev_pv():
-        lines = prev_pv_val()
-        if not lines:
-            return ui.p(
-                "Prior ply PV will appear here.", class_="text-muted small mb-1"
-            )
-        highlight_ready = analysis_done()
-
-        def _normalize_san(value: str) -> str:
-            return value.rstrip("+#")
-
-        def _first_pv_move(pv_line: str) -> str | None:
-            _, sep, pv = pv_line.partition("—")
-            pv_part = pv.strip() if sep else pv_line.strip()
-            if not pv_part:
-                return None
-            tokens = pv_part.split()
-            if not tokens:
-                return None
-            if tokens[0].endswith(".") or tokens[0].endswith("..."):
-                return tokens[1] if len(tokens) > 1 else None
-            return tokens[0]
-
         ply = ply_val()
-        current_san = None
-        if ply > 0:
-            sans = sans_val()
-            if ply <= len(sans):
-                current_san = _normalize_san(sans[ply - 1])
-
-        items = []
-        for line in lines:
-            first_move = _first_pv_move(line)
-            if current_san and first_move:
-                first_move = _normalize_san(first_move)
-            if highlight_ready and current_san and first_move == current_san:
-                items.append(ui.tags.li(line, class_="text-success"))
-            else:
-                items.append(ui.tags.li(line))
-        return ui.tags.div(
-            ui.tags.div("Prior ply:", class_="text-muted small mb-0"),
-            ui.tags.ol(*items, class_="mb-0"),
+        sans = sans_val()
+        current_san = sans[ply - 1] if ply > 0 and ply <= len(sans) else None
+        return render_pv_list(
+            prev_pv_val(),
+            current_san,
+            analysis_done(),
+            title="Prior ply:",
+            empty_msg="Prior ply PV will appear here.",
         )
 
     @render.ui
     def move_summary():
-        status = annotation_status()
-        summary = summary_val()
-        if status == "running" and not summary:
-            return ui.p("Analyzing...", class_="text-muted")
-        if not summary:
-            return ui.p("No annotations yet.", class_="text-muted")
-        order = ["??", "?", "?!", "OK"]
-        white_counts = summary.get("White", {})
-        black_counts = summary.get("Black", {})
-        white_avg = float(white_counts.get("avg_cpl", 0.0))
-        black_avg = float(black_counts.get("avg_cpl", 0.0))
-        white_avg_cpl = round(white_avg)
-        black_avg_cpl = round(black_avg)
-        white_elo = calculate_estimated_elo(white_avg)
-        black_elo = calculate_estimated_elo(black_avg)
-        note = (
-            ui.p("Analyzing...", class_="text-muted mb-1")
-            if status == "running"
-            else None
+        return render_summary_table(
+            summary_val(),
+            annotation_status(),
+            calculate_estimated_elo,
         )
-        meta = summary.get("meta", {}) if isinstance(summary, dict) else {}
-        duration = meta.get("duration_sec")
-        footnote = (
-            ui.tags.div(
-                f"Analysis completed in {float(duration):.2f} seconds.",
-                class_="text-muted small mt-1 fst-italic",
-            )
-            if duration is not None
-            else None
-        )
-        table = ui.tags.table(
-            {"class": "table table-sm text-center mb-0"},
-            ui.tags.thead(
-                ui.tags.tr(
-                    ui.tags.th("Player"),
-                    *[ui.tags.th(label) for label in order],
-                    ui.tags.th("Avg CPL"),
-                    ui.tags.th("Est Elo"),
-                )
-            ),
-            ui.tags.tbody(
-                ui.tags.tr(
-                    ui.tags.td("White"),
-                    *[ui.tags.td(str(white_counts.get(label, 0))) for label in order],
-                    ui.tags.td(str(white_avg_cpl)),
-                    ui.tags.td(f"{white_elo:.0f}"),
-                ),
-                ui.tags.tr(
-                    ui.tags.td("Black"),
-                    *[ui.tags.td(str(black_counts.get(label, 0))) for label in order],
-                    ui.tags.td(str(black_avg_cpl)),
-                    ui.tags.td(f"{black_elo:.0f}"),
-                ),
-            ),
-        )
-        if note is None and footnote is None:
-            return table
-        return ui.tags.div(*(value for value in (note, table, footnote) if value))
 
     @render.ui
     def move_list():
-        sans = sans_val()
-        if not sans:
-            return ui.p("No moves loaded.", class_="text-muted")
-
-        rows = move_rows(sans)
-        current_ply = ply_val()
-        annotations = annotations_val()
-        table_rows = []
-
-        for row_index, (move_no, white, black) in enumerate(rows):
-            white_ply = row_index * 2 + 1
-            black_ply = row_index * 2 + 2
-
-            white_attrs = {"data-ply": str(white_ply)}
-            if white_ply == current_ply:
-                white_attrs["class"] = "is-selected"
-            white_label = annotations.get(white_ply, "")
-            white_text = f"{white} {white_label}".rstrip()
-
-            if black:
-                black_attrs = {"data-ply": str(black_ply)}
-                if black_ply == current_ply:
-                    black_attrs["class"] = "is-selected"
-                black_label = annotations.get(black_ply, "")
-                black_text = f"{black} {black_label}".rstrip()
-                black_cell = ui.tags.td(black_text, **black_attrs)
-            else:
-                black_cell = ui.tags.td("")
-
-            table_rows.append(
-                ui.tags.tr(
-                    ui.tags.td(str(move_no)),
-                    ui.tags.td(white_text, **white_attrs),
-                    black_cell,
-                )
-            )
-
-        return ui.tags.table(
-            {"class": "table table-sm move-table"},
-            ui.tags.thead(
-                ui.tags.tr(
-                    ui.tags.th("#"),
-                    ui.tags.th("White"),
-                    ui.tags.th("Black"),
-                )
-            ),
-            ui.tags.tbody(*table_rows),
+        return render_move_list(
+            sans_val(),
+            ply_val(),
+            annotations_val(),
+            move_rows,
         )
 
     @render_widget
     def eval_graph():
-        status = annotation_status()
-        evals = evals_val()
+        fig = create_eval_graph(evals_val(), annotation_status())
 
-        # Show evaluating message when annotation is running
-        if status == "running":
-            fig = go.Figure()
-            fig.add_annotation(
-                text="Evaluating...",
-                xref="paper",
-                yref="paper",
-                x=0.5,
-                y=0.5,
-                showarrow=False,
-                font=dict(size=14, color="rgba(100, 100, 100, 0.8)"),
-            )
-            fig.update_layout(
-                xaxis=dict(visible=False),
-                yaxis=dict(visible=False),
-                height=200,
-                margin=dict(l=50, r=20, t=20, b=50),
-                plot_bgcolor="rgba(128, 128, 128, 0.3)",
-                autosize=True,
-            )
-            return fig
+        # If it's a full figure with data, convert to FigureWidget with click handlers
+        if evals_val() and len(evals_val()) > 1:
+            fw = go.FigureWidget(fig)
+            plies = list(range(0, len(evals_val())))
 
-        # Show prompt message when no data
-        if not evals or len(evals) <= 1:
-            fig = go.Figure()
-            fig.add_annotation(
-                text="Annotate the game to see the evaluation graph",
-                xref="paper",
-                yref="paper",
-                x=0.5,
-                y=0.5,
-                showarrow=False,
-                font=dict(size=14, color="rgba(100, 100, 100, 0.8)"),
-            )
-            fig.update_layout(
-                xaxis=dict(visible=False),
-                yaxis=dict(visible=False),
-                height=200,
-                margin=dict(l=50, r=20, t=20, b=50),
-                plot_bgcolor="rgba(128, 128, 128, 0.3)",
-                autosize=True,
-            )
-            return fig
+            def _on_click_callback(trace, points, selector):
+                """Handle click events on the graph."""
+                if points and points.point_inds:
+                    clicked_ply = plies[points.point_inds[0]]
+                    total = len(moves_val())
+                    clicked_ply = max(0, min(clicked_ply, total))
+                    if clicked_ply != ply_val():
+                        ply_val.set(clicked_ply)
 
-        # Create x-axis (ply numbers starting from 1)
-        plies = list(range(0, len(evals)))
+            # Attach click handler to all traces
+            for trace in fw.data:
+                trace.on_click(_on_click_callback)
 
-        # Convert evaluations to pawns (divide by 100) and cap between -10 and +10
-        eval_pawns = [e / 100 for e in evals]
+            return fw
 
-        # Create the figure
-        fig = go.Figure()
-
-        # Add invisible hover-sensitive area from data to x-axis
-        fig.add_trace(
-            go.Scatter(
-                x=plies,
-                y=eval_pawns,
-                fill="tozeroy",
-                fillcolor="rgba(0, 0, 0, 0)",  # Invisible
-                line=dict(width=0),
-                mode="none",
-                showlegend=False,
-                hovertemplate="Eval: %{y:.2f}<extra></extra>",
-            )
-        )
-
-        # Add shaded area for positive values (white)
-        fig.add_trace(
-            go.Scatter(
-                x=plies,
-                y=eval_pawns,
-                fill="tozeroy",
-                fillcolor="rgba(255, 255, 255, 0.7)",
-                line=dict(width=0),
-                mode="none",
-                showlegend=False,
-                hoverinfo="skip",
-            )
-        )
-
-        # Add shaded area for negative values (black)
-        fig.add_trace(
-            go.Scatter(
-                x=plies,
-                y=[min(0, v) for v in eval_pawns],
-                fill="tozeroy",
-                fillcolor="rgba(0, 0, 0, 0.7)",
-                line=dict(width=0),
-                mode="none",
-                showlegend=False,
-                hoverinfo="skip",
-            )
-        )
-
-        # Add main trace line on top
-        fig.add_trace(
-            go.Scatter(
-                x=plies,
-                y=eval_pawns,
-                mode="lines+markers",
-                name="Evaluation",
-                line=dict(color="rgba(100, 100, 100, 0.8)", width=1),
-                marker=dict(size=2, color="rgba(100, 100, 100, 0.8)"),
-                hoverinfo="skip",  # Disable hover on this trace since invisible trace handles it
-            )
-        )
-
-        # Update layout
-        fig.update_layout(
-            xaxis_title="Ply",
-            yaxis_title="Eval (pawns)",
-            hovermode="x unified",
-            showlegend=False,
-            margin=dict(l=50, r=20, t=20, b=50),
-            height=200,
-            autosize=True,
-            plot_bgcolor="rgba(128, 128, 128, 0.3)",
-            xaxis=dict(
-                range=[0.5, len(evals) + 0.5],
-                gridcolor="rgba(255,255,255,0.3)",
-                zeroline=True,
-                zerolinecolor="rgba(0,0,0,0.5)",
-                zerolinewidth=2,
-            ),
-            yaxis=dict(
-                range=[-8, 8],
-                gridcolor="rgba(255,255,255,0.3)",
-                zeroline=True,
-                zerolinecolor="rgba(0,0,0,0.5)",
-                zerolinewidth=2,
-            ),
-        )
-
-        # Convert to interactive FigureWidget so callbacks fire in Shiny
-        fw = go.FigureWidget(fig)
-
-        def _on_click_callback(trace, points, selector):
-            """Handle click events on the graph."""
-            if points and points.point_inds:
-                clicked_ply = plies[points.point_inds[0]]
-                total = len(moves_val())
-                clicked_ply = max(0, min(clicked_ply, total))
-                if clicked_ply != ply_val():
-                    ply_val.set(clicked_ply)
-
-        # Attach click handler to all traces (especially the invisible one for full coverage)
-        for trace in fw.data:
-            trace.on_click(_on_click_callback)
-
-        return fw
+        return fig

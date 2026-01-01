@@ -74,10 +74,15 @@ chess-lab/
 │       ├── app.py              # Main application entry point
 │       ├── app_ui.py           # UI layout and styling
 │       ├── app_server.py       # Server logic and reactive components
-│       ├── game_utils.py       # PGN parsing and game utilities
-│       ├── analysis_engine.py  # Chess analysis and annotation logic
-│       ├── analysis/
-│       │   ├── __init__.py
+│       ├── utils/              # Utility modules
+│       │   ├── __init__.py     # Module exports
+│       │   ├── game_utils.py   # PGN parsing and game utilities
+│       │   ├── chart_utils.py  # Plotly chart generation
+│       │   ├── ui_helpers.py   # UI rendering helpers
+│       │   └── state_utils.py  # State management utilities
+│       ├── analysis/           # Chess analysis modules
+│       │   ├── __init__.py     # Module exports
+│       │   ├── analysis_engine.py  # Move annotation and evaluation
 │       │   └── stockfish.py    # Stockfish engine integration
 │       └── stockfish/          # Stockfish binary (auto-downloaded)
 ├── data/
@@ -116,23 +121,22 @@ Click "Annotate Moves" to perform full game analysis. The system evaluates each 
 
 ### Module Overview
 
-#### `app.py`
-Main application entry point that combines UI and server components.
+#### Core Application
+- **`app.py`**: Main application entry point that combines UI and server components
+- **`app_ui.py`**: Complete user interface including sidebar controls, board display, move list table, analysis panels, and game metadata
 
-#### `app_ui.py`
-Defines the complete user interface including sidebar controls, board display, move list table, analysis output panels, and game metadata display.
+#### Server Logic
+- **`app_server.py`**: Core server with reactive programming, application state management, user interaction handling, real-time analysis streaming, and UI rendering coordination
 
-#### `app_server.py`
-Core server logic with reactive programming. Manages application state, handles user interactions, streams real-time analysis, coordinates move annotation, and renders UI components.
+#### Utilities (`utils/`)
+- **`game_utils.py`**: PGN parsing, metadata extraction, board position management, and move formatting
+- **`chart_utils.py`**: Plotly evaluation graph generation with interactive features
+- **`ui_helpers.py`**: Reusable UI rendering functions for tables, lists, and formatted output
+- **`state_utils.py`**: Application state management and parameter validation helpers
 
-#### `game_utils.py`
-Chess game utilities for PGN parsing, metadata extraction, board position management, and move formatting.
-
-#### `analysis_engine.py`
-Chess analysis engine implementing move quality classification, annotation generation, performance statistics, Elo estimation, and threading workers for analysis tasks.
-
-#### `analysis/stockfish.py`
-Stockfish integration providing automatic binary download, multi-platform support, position evaluation, MultiPV analysis streaming, and concurrent position analysis.
+#### Analysis (`analysis/`)
+- **`analysis_engine.py`**: Move quality classification, game annotation, performance statistics, Elo estimation, and threaded analysis workers
+- **`stockfish.py`**: Stockfish integration with automatic binary download, multi-platform support, position evaluation, and MultiPV analysis streaming
 
 ## Technical Details
 
