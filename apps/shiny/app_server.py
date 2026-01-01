@@ -316,7 +316,7 @@ def server(input, output, session):
             think_time = float(input.think_time())
         except (TypeError, ValueError):
             think_time = 1.0
-        think_time = max(1.0, min(think_time, 60.0))
+        think_time = max(0.1, min(think_time, 60.0))
 
         if annotation_stop is not None:
             annotation_stop.set()
@@ -399,7 +399,7 @@ def server(input, output, session):
             think_time = float(input.think_time())
         except (TypeError, ValueError):
             think_time = 5.0
-        think_time = max(1.0, min(think_time, 60.0))
+        think_time = max(0.1, min(think_time, 60.0))
         fen = board.fen()
         analysis_key = (fen, multipv, think_time)
         if analysis_key == last_analysis_key:

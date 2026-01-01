@@ -143,9 +143,9 @@ app_ui = ui.page_fluid(
                     ),
                     ui.input_select(
                         "think_time",
-                        "Engine time (seconds)",
-                        choices=["1", "3", "10"],
-                        selected="1",
+                        "Engine time (sec/move):",
+                        choices=["0.3", "1", "3", "10"],
+                        selected="0.3",
                     ),
                     ui.input_action_button("annotate_moves", "Annotate Game"),
                     ui.hr(),
