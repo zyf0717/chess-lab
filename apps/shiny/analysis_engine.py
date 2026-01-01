@@ -140,9 +140,9 @@ def annotate_game_worker(
 
         summary = summarize_annotations(label_annotations, cpl_by_ply, len(move_list))
         summary["meta"] = {"duration_sec": time.monotonic() - start_time}
-        out_queue.put((current_id, display_annotations, summary))
+        out_queue.put((current_id, display_annotations, summary, evals))
     except Exception:
-        out_queue.put((current_id, {}, {}))
+        out_queue.put((current_id, {}, {}, []))
 
 
 def stream_analysis_worker(

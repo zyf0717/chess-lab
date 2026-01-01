@@ -1,6 +1,7 @@
 import shinyswatch
 from shiny import ui
 from shinyswatch import theme_picker_ui
+from shinywidgets import output_widget
 
 app_ui = ui.page_fluid(
     ui.tags.style(
@@ -151,7 +152,7 @@ app_ui = ui.page_fluid(
                         "engine_threads",
                         "CPU threads:",
                         choices=[str(value) for value in range(1, 9)],
-                        selected="3",
+                        selected="8",
                     ),
                     ui.input_action_button("annotate_moves", "Annotate Game"),
                     ui.hr(),
@@ -178,6 +179,8 @@ app_ui = ui.page_fluid(
                                 class_="d-flex justify-content-center gap-2 mt-2",
                             ),
                             ui.output_ui("fen_line"),
+                        ),
+                        ui.card(
                             ui.output_text("eval_line"),
                             ui.output_ui("pv"),
                             ui.output_ui("prev_pv"),
@@ -196,6 +199,10 @@ app_ui = ui.page_fluid(
                         ui.card(
                             ui.card_header("Move Summary"),
                             ui.output_ui("move_summary"),
+                        ),
+                        ui.card(
+                            ui.card_header("Evaluation Graph"),
+                            output_widget("eval_graph"),
                         ),
                     ),
                 ),

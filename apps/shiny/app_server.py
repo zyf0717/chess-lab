@@ -5,6 +5,7 @@ import threading
 
 import chess
 import chess.svg
+import plotly.graph_objects as go
 from analysis_engine import (
     annotate_game_worker,
     calculate_estimated_elo,
@@ -14,6 +15,7 @@ from analysis_engine import (
 from game_utils import board_at_ply, extract_game_info, move_rows, parse_pgn
 from shiny import reactive, render, ui
 from shinyswatch import theme_picker_server
+from shinywidgets import render_plotly
 
 BOARD_SIZE = 360
 
@@ -33,6 +35,7 @@ def server(input, output, session):
     annotations_val = reactive.Value({})
     summary_val = reactive.Value({})
     annotation_status = reactive.Value("idle")
+    evals_val = reactive.Value([])
     info_val = reactive.Value(
         {
             "start": "Unknown",
@@ -53,7 +56,7 @@ def server(input, output, session):
     last_analysis_key: tuple[str, int, float] | None = None
     engine_move_val = reactive.Value(None)
     annotation_queue: queue.Queue[
-        tuple[int, dict[int, str], dict[str, dict[str, int]]]
+        tuple[int, dict[int, str], dict[str, dict[str, int]], list[int]]
     ] = queue.Queue()
     annotation_thread: threading.Thread | None = None
     annotation_stop: threading.Event | None = None
@@ -87,6 +90,7 @@ def server(input, output, session):
             annotations_val.set({})
             summary_val.set({})
             annotation_status.set("idle")
+            evals_val.set([])
             engine_move_val.set(None)
             _set_game_info(None)
             return
@@ -104,6 +108,7 @@ def server(input, output, session):
             annotations_val.set({})
             summary_val.set({})
             annotation_status.set("idle")
+            evals_val.set([])
             engine_move_val.set(None)
             _set_game_info(None)
             return
@@ -175,6 +180,7 @@ def server(input, output, session):
         if not moves:
             annotations_val.set({})
             summary_val.set({})
+            evals_val.set([])
             return
 
         try:
@@ -192,7 +198,7 @@ def server(input, output, session):
             annotation_stop.set()
         annotation_stop = threading.Event()
         local_queue: queue.Queue[
-            tuple[int, dict[int, str], dict[str, dict[str, int]]]
+            tuple[int, dict[int, str], dict[str, dict[str, int]], list[int]]
         ] = queue.Queue()
         annotation_queue = local_queue
         annotation_id += 1
@@ -351,18 +357,21 @@ def server(input, output, session):
         reactive.invalidate_later(0.4)
         latest_annotations = None
         latest_summary = None
+        latest_evals = None
         while True:
             try:
-                message_id, annotations, summary = annotation_queue.get_nowait()
+                message_id, annotations, summary, evals = annotation_queue.get_nowait()
             except queue.Empty:
                 break
             if message_id == annotation_id:
                 latest_annotations = annotations
                 latest_summary = summary
+                latest_evals = evals
         if latest_annotations is not None:
             annotations_val.set(latest_annotations)
         if latest_summary is not None:
             summary_val.set(latest_summary)
+            evals_val.set(latest_evals if latest_evals else [])
             annotation_status.set("idle")
 
     @reactive.Effect
@@ -382,7 +391,6 @@ def server(input, output, session):
         if ply != ply_val():
             ply_val.set(ply)
 
-    @output
     @render.ui
     def board_view():
         board = _current_board()
@@ -415,7 +423,6 @@ def server(input, output, session):
         svg = chess.svg.board(board=board, size=BOARD_SIZE, arrows=arrows)
         return ui.HTML(svg)
 
-    @output
     @render.text
     def eval_line():
         message = eval_val()
@@ -454,7 +461,6 @@ def server(input, output, session):
 
         return f"Move: {move_prefix}{move_text}{annotation} ({cpl_display})"
 
-    @output
     @render.ui
     def fen_line():
         fen = _current_board().fen()
@@ -464,7 +470,6 @@ def server(input, output, session):
             class_="fen-line small text-center",
         )
 
-    @output
     @render.ui
     def game_info():
         info = info_val()
@@ -490,7 +495,6 @@ def server(input, output, session):
             ),
         )
 
-    @output
     @render.ui
     def pv():
         lines = pv_val()
@@ -501,7 +505,6 @@ def server(input, output, session):
             ui.tags.ol(*[ui.tags.li(line) for line in lines], class_="mb-0"),
         )
 
-    @output
     @render.ui
     def prev_pv():
         lines = prev_pv_val()
@@ -547,7 +550,6 @@ def server(input, output, session):
             ui.tags.ol(*items, class_="mb-0"),
         )
 
-    @output
     @render.ui
     def move_summary():
         status = annotation_status()
@@ -609,7 +611,6 @@ def server(input, output, session):
             return table
         return ui.tags.div(*(value for value in (note, table, footnote) if value))
 
-    @output
     @render.ui
     def move_list():
         sans = sans_val()
@@ -660,3 +661,118 @@ def server(input, output, session):
             ),
             ui.tags.tbody(*table_rows),
         )
+
+    @render_plotly
+    def eval_graph():
+        evals = evals_val()
+        if not evals or len(evals) <= 1:
+            # Return empty figure with message
+            fig = go.Figure()
+            fig.add_annotation(
+                text="Annotate the game to see the evaluation graph",
+                xref="paper",
+                yref="paper",
+                x=0.5,
+                y=0.5,
+                showarrow=False,
+                font=dict(size=14, color="gray"),
+            )
+            fig.update_layout(
+                xaxis=dict(visible=False),
+                yaxis=dict(visible=False),
+                height=200,
+                margin=dict(l=20, r=20, t=20, b=20),
+            )
+            return fig
+
+        # Create x-axis (ply numbers starting from 1)
+        plies = list(range(1, len(evals) + 1))
+
+        # Convert evaluations to pawns (divide by 100) and cap between -10 and +10
+        eval_pawns = [e / 100 for e in evals]
+
+        # Create the figure
+        fig = go.Figure()
+
+        # Add invisible hover-sensitive area from data to x-axis
+        fig.add_trace(
+            go.Scatter(
+                x=plies,
+                y=eval_pawns,
+                fill="tozeroy",
+                fillcolor="rgba(0, 0, 0, 0)",  # Invisible
+                line=dict(width=0),
+                mode="none",
+                showlegend=False,
+                hovertemplate="Eval: %{y:.2f}<extra></extra>",
+            )
+        )
+
+        # Add shaded area for positive values (white)
+        fig.add_trace(
+            go.Scatter(
+                x=plies,
+                y=eval_pawns,
+                fill="tozeroy",
+                fillcolor="rgba(255, 255, 255, 0.7)",
+                line=dict(width=0),
+                mode="none",
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+
+        # Add shaded area for negative values (black)
+        fig.add_trace(
+            go.Scatter(
+                x=plies,
+                y=[min(0, v) for v in eval_pawns],
+                fill="tozeroy",
+                fillcolor="rgba(0, 0, 0, 0.7)",
+                line=dict(width=0),
+                mode="none",
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+
+        # Add main trace line on top
+        fig.add_trace(
+            go.Scatter(
+                x=plies,
+                y=eval_pawns,
+                mode="lines+markers",
+                name="Evaluation",
+                line=dict(color="rgba(100, 100, 100, 0.8)", width=1),
+                marker=dict(size=2, color="rgba(100, 100, 100, 0.8)"),
+                hoverinfo="skip",  # Disable hover on this trace since invisible trace handles it
+            )
+        )
+
+        # Update layout
+        fig.update_layout(
+            xaxis_title="Ply",
+            yaxis_title="Eval (pawns)",
+            hovermode="x unified",
+            showlegend=False,
+            margin=dict(l=50, r=20, t=20, b=50),
+            height=200,
+            autosize=True,
+            plot_bgcolor="rgba(128, 128, 128, 0.3)",
+            xaxis=dict(
+                range=[1, len(evals)],
+                gridcolor="rgba(255,255,255,0.3)",
+                zeroline=True,
+                zerolinecolor="rgba(0,0,0,0.5)",
+                zerolinewidth=2,
+            ),
+            yaxis=dict(
+                range=[-8, 8],
+                gridcolor="rgba(255,255,255,0.3)",
+                zeroline=True,
+                zerolinecolor="rgba(0,0,0,0.5)",
+                zerolinewidth=2,
+            ),
+        )
+
+        return fig
