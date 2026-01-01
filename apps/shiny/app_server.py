@@ -500,9 +500,43 @@ def server(input, output, session):
         lines = pv_val()
         if not lines:
             return ui.p("PV will appear here.", class_="text-muted")
+        highlight_ready = analysis_done()
+
+        def _normalize_san(value: str) -> str:
+            return value.rstrip("+#")
+
+        def _first_pv_move(pv_line: str) -> str | None:
+            _, sep, pv = pv_line.partition("—")
+            pv_part = pv.strip() if sep else pv_line.strip()
+            if not pv_part:
+                return None
+            tokens = pv_part.split()
+            if not tokens:
+                return None
+            if tokens[0].endswith(".") or tokens[0].endswith("..."):
+                return tokens[1] if len(tokens) > 1 else None
+            return tokens[0]
+
+        # Get the next move to be played
+        ply = ply_val()
+        sans = sans_val()
+        next_san = None
+        if ply < len(sans):
+            next_san = _normalize_san(sans[ply])
+
+        items = []
+        for line in lines:
+            first_move = _first_pv_move(line)
+            if next_san and first_move:
+                first_move = _normalize_san(first_move)
+            if highlight_ready and next_san and first_move == next_san:
+                items.append(ui.tags.li(line, class_="text-success"))
+            else:
+                items.append(ui.tags.li(line))
+
         return ui.tags.div(
             ui.tags.div("PV:", class_="text-muted small mb-0"),
-            ui.tags.ol(*[ui.tags.li(line) for line in lines], class_="mb-0"),
+            ui.tags.ol(*items, class_="mb-0"),
         )
 
     @render.ui
@@ -664,9 +698,33 @@ def server(input, output, session):
 
     @render_widget
     def eval_graph():
+        status = annotation_status()
         evals = evals_val()
+
+        # Show evaluating message when annotation is running
+        if status == "running":
+            fig = go.Figure()
+            fig.add_annotation(
+                text="Evaluating...",
+                xref="paper",
+                yref="paper",
+                x=0.5,
+                y=0.5,
+                showarrow=False,
+                font=dict(size=14, color="rgba(100, 100, 100, 0.8)"),
+            )
+            fig.update_layout(
+                xaxis=dict(visible=False),
+                yaxis=dict(visible=False),
+                height=200,
+                margin=dict(l=50, r=20, t=20, b=50),
+                plot_bgcolor="rgba(128, 128, 128, 0.3)",
+                autosize=True,
+            )
+            return fig
+
+        # Show prompt message when no data
         if not evals or len(evals) <= 1:
-            # Return empty figure with message
             fig = go.Figure()
             fig.add_annotation(
                 text="Annotate the game to see the evaluation graph",
@@ -675,18 +733,20 @@ def server(input, output, session):
                 x=0.5,
                 y=0.5,
                 showarrow=False,
-                font=dict(size=14, color="gray"),
+                font=dict(size=14, color="rgba(100, 100, 100, 0.8)"),
             )
             fig.update_layout(
                 xaxis=dict(visible=False),
                 yaxis=dict(visible=False),
                 height=200,
-                margin=dict(l=20, r=20, t=20, b=20),
+                margin=dict(l=50, r=20, t=20, b=50),
+                plot_bgcolor="rgba(128, 128, 128, 0.3)",
+                autosize=True,
             )
             return fig
 
         # Create x-axis (ply numbers starting from 1)
-        plies = list(range(1, len(evals) + 1))
+        plies = list(range(0, len(evals)))
 
         # Convert evaluations to pawns (divide by 100) and cap between -10 and +10
         eval_pawns = [e / 100 for e in evals]
@@ -760,7 +820,7 @@ def server(input, output, session):
             autosize=True,
             plot_bgcolor="rgba(128, 128, 128, 0.3)",
             xaxis=dict(
-                range=[1, len(evals)],
+                range=[0.5, len(evals) + 0.5],
                 gridcolor="rgba(255,255,255,0.3)",
                 zeroline=True,
                 zerolinecolor="rgba(0,0,0,0.5)",
