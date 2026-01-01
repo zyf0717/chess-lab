@@ -51,6 +51,8 @@ def server(input, output, session):
     ply_val = reactive.Value(0)
     eval_val = reactive.Value("CPL: --")
     pv_val = reactive.Value([])
+    prev_pv_val = reactive.Value([])
+    analysis_done = reactive.Value(False)
     analysis_ready = reactive.Value(False)
     annotations_val = reactive.Value({})
     summary_val = reactive.Value({})
@@ -66,9 +68,9 @@ def server(input, output, session):
             "black_elo": "Unknown",
         }
     )
-    analysis_queue: queue.Queue[tuple[int, int | None, list[str], str | None]] = (
-        queue.Queue()
-    )
+    analysis_queue: queue.Queue[
+        tuple[int, int | str | None, list[str], str | None, list[str] | None, bool]
+    ] = queue.Queue()
     analysis_thread: threading.Thread | None = None
     analysis_stop: threading.Event | None = None
     analysis_id = 0
@@ -410,13 +412,15 @@ def server(input, output, session):
         if analysis_stop is not None:
             analysis_stop.set()
         analysis_stop = threading.Event()
-        local_queue: queue.Queue[tuple[int, int | None, list[str], str | None]] = (
-            queue.Queue()
-        )
+        local_queue: queue.Queue[
+            tuple[int, int | str | None, list[str], str | None, list[str] | None, bool]
+        ] = queue.Queue()
         analysis_queue = local_queue
 
         eval_val.set("CPL: …")
         pv_val.set([])
+        prev_pv_val.set([])
+        analysis_done.set(False)
         engine_move_val.set(None)
 
         def worker(
@@ -428,7 +432,7 @@ def server(input, output, session):
             try:
                 board_obj = chess.Board(fen_str)
                 prev_board = chess.Board(prev_fen_str) if prev_fen_str else None
-                for delta_cp, lines, best_move in stream_analysis(
+                for delta_cp, lines, best_move, prev_pv, done in stream_analysis(
                     board_obj,
                     time_limit=think_time,
                     multipv=multipv,
@@ -438,14 +442,20 @@ def server(input, output, session):
                     if stop_event.is_set():
                         break
                     if delta_cp is None:
-                        out_queue.put((current_id, None, lines, best_move))
+                        out_queue.put(
+                            (current_id, None, lines, best_move, prev_pv, done)
+                        )
                         continue
                     # Convert white-POV delta to mover CPL for display.
                     delta_for_mover = delta_cp if mover_is_white else -delta_cp
                     cpl = max(0, -delta_for_mover)
-                    out_queue.put((current_id, cpl, lines, best_move))
+                    out_queue.put(
+                        (current_id, cpl, lines, best_move, prev_pv, done)
+                    )
             except Exception as exc:
-                out_queue.put((current_id, f"Engine unavailable: {exc}", [], None))
+                out_queue.put(
+                    (current_id, f"Engine unavailable: {exc}", [], None, None, True)
+                )
 
         analysis_thread = threading.Thread(
             target=worker,
@@ -478,9 +488,13 @@ def server(input, output, session):
         latest = None
         latest_lines = None
         latest_move = None
+        latest_prev_pv = None
+        analysis_complete = False
         while True:
             try:
-                message_id, message, lines, best_move = analysis_queue.get_nowait()
+                message_id, message, lines, best_move, prev_pv, done = (
+                    analysis_queue.get_nowait()
+                )
             except queue.Empty:
                 break
             if message_id == analysis_id:
@@ -488,6 +502,8 @@ def server(input, output, session):
                 latest = message
                 latest_lines = lines
                 latest_move = best_move
+                latest_prev_pv = prev_pv
+                analysis_complete = analysis_complete or done
         if latest_set:
             if isinstance(latest, str) and latest.startswith("Engine unavailable"):
                 eval_val.set(latest)
@@ -497,8 +513,12 @@ def server(input, output, session):
                 eval_val.set(f"CPL: {latest}")
         if latest_lines is not None:
             pv_val.set(latest_lines)
+        if latest_prev_pv is not None:
+            prev_pv_val.set(latest_prev_pv)
         if latest_move is not None:
             engine_move_val.set(latest_move)
+        if analysis_complete:
+            analysis_done.set(True)
 
     @reactive.Effect
     def _drain_annotation_queue():
@@ -573,7 +593,40 @@ def server(input, output, session):
     @output
     @render.text
     def eval_line():
-        return eval_val()
+        message = eval_val()
+        if isinstance(message, str) and message.startswith("Engine unavailable"):
+            return message
+
+        cpl_display = "--"
+        if isinstance(message, str) and message.startswith("CPL:"):
+            cpl_display = message.split(":", 1)[1].strip()
+        elif isinstance(message, str) and message:
+            cpl_display = message
+
+        ply = ply_val()
+        sans = sans_val()
+        move_text = "--"
+        move_prefix = ""
+        annotation = ""
+        if ply > 0 and ply <= len(sans):
+            move_no = (ply + 1) // 2
+            move_prefix = f"{move_no}. " if (ply % 2) == 1 else f"{move_no}... "
+            move_text = sans[ply - 1]
+            annotation_text = annotations_val().get(ply, "")
+            if annotation_text:
+                annotation = f" {annotation_text.split()[0]}"
+
+        return f"Move: {move_prefix}{move_text}{annotation} ({cpl_display})"
+
+    @output
+    @render.ui
+    def fen_line():
+        fen = _current_board().fen()
+        return ui.tags.div(
+            ui.tags.span("FEN:", class_="text-muted me-1"),
+            ui.tags.code(fen),
+            class_="fen-line small text-center",
+        )
 
     @output
     @render.ui
@@ -603,11 +656,60 @@ def server(input, output, session):
 
     @output
     @render.ui
-    def pv_lines():
+    def pv():
         lines = pv_val()
         if not lines:
-            return ui.p("Top lines will appear here.", class_="text-muted")
-        return ui.tags.ol(*[ui.tags.li(line) for line in lines], class_="mb-0")
+            return ui.p("PV will appear here.", class_="text-muted")
+        return ui.tags.div(
+            ui.tags.div("PV:", class_="text-muted small mb-0"),
+            ui.tags.ol(*[ui.tags.li(line) for line in lines], class_="mb-0"),
+        )
+
+    @output
+    @render.ui
+    def prev_pv():
+        lines = prev_pv_val()
+        if not lines:
+            return ui.p(
+                "Prior ply PV will appear here.", class_="text-muted small mb-1"
+            )
+        highlight_ready = analysis_done()
+
+        def _normalize_san(value: str) -> str:
+            return value.rstrip("+#")
+
+        def _first_pv_move(pv_line: str) -> str | None:
+            _, sep, pv = pv_line.partition("—")
+            pv_part = pv.strip() if sep else pv_line.strip()
+            if not pv_part:
+                return None
+            tokens = pv_part.split()
+            if not tokens:
+                return None
+            if tokens[0].endswith(".") or tokens[0].endswith("..."):
+                return tokens[1] if len(tokens) > 1 else None
+            return tokens[0]
+
+        ply = ply_val()
+        current_san = None
+        if ply > 0:
+            sans = sans_val()
+            if ply <= len(sans):
+                current_san = _normalize_san(sans[ply - 1])
+
+        items = []
+        for line in lines:
+            first_move = _first_pv_move(line)
+            if current_san and first_move:
+                first_move = _normalize_san(first_move)
+            if highlight_ready and current_san and first_move == current_san:
+                items.append(ui.tags.li(line, class_="text-success"))
+            else:
+                items.append(ui.tags.li(line))
+        return ui.tags.div(
+            ui.tags.div("Prior ply:", class_="text-muted small mb-0"),
+            ui.tags.ol(*items, class_="mb-0"),
+        )
 
     @output
     @render.ui

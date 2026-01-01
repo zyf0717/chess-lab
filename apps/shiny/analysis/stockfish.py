@@ -216,7 +216,7 @@ def stream_analysis(
     stop_event=None,
     best_move_board: chess.Board | None = None,
 ):
-    """Yield (delta_cp_white, pv_lines, best_move_uci) while streaming analysis."""
+    """Yield (delta_cp_white, pv_lines, best_move_uci, prev_pv_lines, done)."""
     path = ensure_stockfish_binary()
     engine = chess.engine.SimpleEngine.popen_uci(str(path))
     try:
@@ -226,26 +226,53 @@ def stream_analysis(
             limit = chess.engine.Limit(time=time_limit, depth=depth)
 
         best_move_uci = None
-        if best_move_board is not None:
-            try:
-                best = engine.play(best_move_board, limit)
-                if best.move is not None:
-                    best_move_uci = best.move.uci()
-            except Exception:
-                best_move_uci = None
-
         prev_cp = None
+        prev_lines = None
         if best_move_board is not None:
             try:
-                prev_info = engine.analyse(best_move_board, limit)
-                prev_score = prev_info["score"].pov(chess.WHITE)
-                prev_cp = clamp_score(score_to_cp(prev_score))
+                if multipv <= 1:
+                    prev_info = engine.analyse(best_move_board, limit)
+                    prev_score = prev_info["score"].pov(chess.WHITE)
+                    prev_cp = clamp_score(score_to_cp(prev_score))
+                    prev_pv = prev_info.get("pv")
+                    if prev_pv:
+                        prev_lines = [
+                            f"{format_score(prev_score)} — "
+                            f"{format_pv(best_move_board, prev_pv)}"
+                        ]
+                        best_move_uci = prev_pv[0].uci()
+                else:
+                    prev_infos = engine.analyse(best_move_board, limit, multipv=multipv)
+                    latest_prev: list[tuple[int, str, int, str | None]] = []
+                    for info in prev_infos:
+                        score = info["score"].pov(chess.WHITE)
+                        line_score = format_score(score)
+                        line_pv = format_pv(best_move_board, info["pv"])
+                        rank = int(info.get("multipv", 1))
+                        first_move = info["pv"][0].uci() if info.get("pv") else None
+                        latest_prev.append(
+                            (
+                                rank,
+                                f"{line_score} — {line_pv}",
+                                clamp_score(score_to_cp(score)),
+                                first_move,
+                            )
+                        )
+                    latest_prev.sort(key=lambda item: item[0])
+                    if latest_prev:
+                        prev_lines = [line for _, line, _, _ in latest_prev]
+                        prev_cp = latest_prev[0][2]
+                        best_move_uci = latest_prev[0][3]
             except Exception:
                 prev_cp = None
+                prev_lines = None
 
         start = time.monotonic()
         with engine.analysis(board, limit, multipv=multipv) as analysis:
             latest: dict[int, tuple[str, str, str | None]] = {}
+            latest_delta = None
+            latest_lines: list[str] | None = None
+            latest_best = best_move_uci
             for info in analysis:
                 if stop_event is not None and stop_event.is_set():
                     analysis.stop()
@@ -265,10 +292,17 @@ def stream_analysis(
                         f"{line_score} — {line_pv}"
                         for _, (line_score, line_pv, _) in sorted(latest.items())
                     ]
-                    best_entry = latest.get(1, (line_score, line_pv, first_move))
-                    yield delta_cp, ordered, best_move_uci or best_entry[2]
+                    latest_delta = delta_cp
+                    latest_lines = ordered
+                    latest_best = best_move_uci
+                    yield latest_delta, latest_lines, latest_best, prev_lines, False
                 if time.monotonic() - start >= time_limit:
                     break
+        if stop_event is not None and stop_event.is_set():
+            return
+        if latest_lines is None:
+            latest_lines = []
+        yield latest_delta, latest_lines, latest_best, prev_lines, True
     finally:
         engine.quit()
 

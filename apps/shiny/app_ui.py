@@ -44,6 +44,18 @@ app_ui = ui.page_fluid(
             background-color: var(--bs-secondary-bg, rgba(0, 0, 0, 0.05));
         }
 
+        .fen-line {
+            word-break: break-all;
+        }
+
+        .fen-line code {
+            word-break: break-all;
+        }
+
+        .prev-pv-line {
+            font-size: 0.9rem;
+        }
+
         line.arrow {
             opacity: 0.7;
         }
@@ -159,8 +171,10 @@ app_ui = ui.page_fluid(
                                 ui.input_action_button("last_move", ">>"),
                                 class_="d-flex justify-content-center gap-2 mt-2",
                             ),
+                            ui.output_ui("fen_line"),
                             ui.output_text("eval_line"),
-                            ui.output_ui("pv_lines"),
+                            ui.output_ui("pv"),
+                            ui.output_ui("prev_pv"),
                         ),
                     ),
                     ui.column(
