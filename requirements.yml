@@ -9,6 +9,5 @@ dependencies:
   - pandas
   - pydantic
   - pytest
-  - ruff
   - pip:
     - shinyswatch==0.9.0
