@@ -211,9 +211,10 @@ class StockfishAnalyzer:
 
 def stream_analysis(
     board: chess.Board,
-    time_limit: float = 5.0,
+    time_limit: float = 10.0,
     depth: int | None = None,
     multipv: int = 3,
+    threads: int = 1,
     stop_event=None,
     best_move_board: chess.Board | None = None,
 ):
@@ -221,6 +222,10 @@ def stream_analysis(
     path = ensure_stockfish_binary()
     engine = chess.engine.SimpleEngine.popen_uci(str(path))
     try:
+        try:
+            engine.configure({"Threads": max(1, int(threads))})
+        except Exception:
+            pass
         if depth is None:
             limit = chess.engine.Limit(time=time_limit)
         else:

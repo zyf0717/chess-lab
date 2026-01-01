@@ -319,7 +319,7 @@ def server(input, output, session):
             think_time = 1.0
         think_time = max(0.1, min(think_time, 60.0))
         try:
-            thread_count = int(input.annotation_threads())
+            thread_count = int(input.engine_threads())
         except (TypeError, ValueError):
             thread_count = 1
         thread_count = max(1, min(thread_count, 8))
@@ -417,12 +417,17 @@ def server(input, output, session):
             multipv = 3
         multipv = max(1, min(multipv, 8))
         try:
+            engine_threads = int(input.engine_threads())
+        except (TypeError, ValueError):
+            engine_threads = 1
+        engine_threads = max(1, min(engine_threads, 8))
+        try:
             think_time = float(input.think_time())
         except (TypeError, ValueError):
             think_time = 5.0
         think_time = max(0.1, min(think_time, 60.0))
         fen = board.fen()
-        analysis_key = (fen, multipv, think_time)
+        analysis_key = (fen, multipv, think_time, engine_threads)
         if analysis_key == last_analysis_key:
             return
 
@@ -457,6 +462,7 @@ def server(input, output, session):
                     board_obj,
                     time_limit=think_time,
                     multipv=multipv,
+                    threads=engine_threads,
                     stop_event=stop_event,
                     best_move_board=prev_board,
                 ):
@@ -492,6 +498,7 @@ def server(input, output, session):
         _ = ply_val()
         _ = moves_val()
         _ = input.multipv()
+        _ = input.engine_threads()
         _ = input.think_time()
         board = _current_board()
         ply = ply_val()
