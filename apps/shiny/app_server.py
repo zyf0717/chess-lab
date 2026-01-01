@@ -15,7 +15,7 @@ from analysis_engine import (
 from game_utils import board_at_ply, extract_game_info, move_rows, parse_pgn
 from shiny import reactive, render, ui
 from shinyswatch import theme_picker_server
-from shinywidgets import render_plotly
+from shinywidgets import render_widget
 
 BOARD_SIZE = 360
 
@@ -662,7 +662,7 @@ def server(input, output, session):
             ui.tags.tbody(*table_rows),
         )
 
-    @render_plotly
+    @render_widget
     def eval_graph():
         evals = evals_val()
         if not evals or len(evals) <= 1:
@@ -775,4 +775,20 @@ def server(input, output, session):
             ),
         )
 
-        return fig
+        # Convert to interactive FigureWidget so callbacks fire in Shiny
+        fw = go.FigureWidget(fig)
+
+        def _on_click_callback(trace, points, selector):
+            """Handle click events on the graph."""
+            if points and points.point_inds:
+                clicked_ply = plies[points.point_inds[0]]
+                total = len(moves_val())
+                clicked_ply = max(0, min(clicked_ply, total))
+                if clicked_ply != ply_val():
+                    ply_val.set(clicked_ply)
+
+        # Attach click handler to all traces (especially the invisible one for full coverage)
+        for trace in fw.data:
+            trace.on_click(_on_click_callback)
+
+        return fw
