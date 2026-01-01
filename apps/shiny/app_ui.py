@@ -147,7 +147,7 @@ app_ui = ui.page_fluid(
                         choices=["1", "3", "10"],
                         selected="1",
                     ),
-                    ui.input_action_button("annotate_moves", "Annotate Moves"),
+                    ui.input_action_button("annotate_moves", "Annotate Game"),
                     ui.hr(),
                     theme_picker_ui(),
                 ),

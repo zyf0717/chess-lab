@@ -598,10 +598,15 @@ def server(input, output, session):
             return message
 
         cpl_display = "--"
+        cpl_value = None
         if isinstance(message, str) and message.startswith("CPL:"):
             cpl_display = message.split(":", 1)[1].strip()
         elif isinstance(message, str) and message:
             cpl_display = message
+        try:
+            cpl_value = int(float(cpl_display))
+        except (TypeError, ValueError):
+            cpl_value = None
 
         ply = ply_val()
         sans = sans_val()
@@ -613,8 +618,18 @@ def server(input, output, session):
             move_prefix = f"{move_no}. " if (ply % 2) == 1 else f"{move_no}... "
             move_text = sans[ply - 1]
             annotation_text = annotations_val().get(ply, "")
+            label = ""
             if annotation_text:
-                annotation = f" {annotation_text.split()[0]}"
+                label = annotation_text.split()[0]
+            elif cpl_value is not None:
+                if cpl_value >= 300:
+                    label = "??"
+                elif cpl_value >= 150:
+                    label = "?"
+                elif cpl_value >= 70:
+                    label = "?!"
+            if label:
+                annotation = f" {label}"
 
         return f"Move: {move_prefix}{move_text}{annotation} ({cpl_display})"
 
