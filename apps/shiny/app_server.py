@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import math
 import queue
 import threading
 from datetime import datetime, timedelta
@@ -624,6 +625,8 @@ def server(input, output, session):
         black_avg = float(black_counts.get("avg_cpl", 0.0))
         white_avg_cpl = round(white_avg)
         black_avg_cpl = round(black_avg)
+        white_elo = 3100 * math.exp(-0.01 * white_avg_cpl)
+        black_elo = 3100 * math.exp(-0.01 * black_avg_cpl)
         note = (
             ui.p("Analyzing...", class_="text-muted mb-1")
             if status == "running"
@@ -636,6 +639,7 @@ def server(input, output, session):
                     ui.tags.th("Player"),
                     *[ui.tags.th(label) for label in order],
                     ui.tags.th("Avg CPL"),
+                    ui.tags.th("Est Elo"),
                 )
             ),
             ui.tags.tbody(
@@ -643,11 +647,13 @@ def server(input, output, session):
                     ui.tags.td("White"),
                     *[ui.tags.td(str(white_counts.get(label, 0))) for label in order],
                     ui.tags.td(str(white_avg_cpl)),
+                    ui.tags.td(f"{white_elo:.0f}"),
                 ),
                 ui.tags.tr(
                     ui.tags.td("Black"),
                     *[ui.tags.td(str(black_counts.get(label, 0))) for label in order],
                     ui.tags.td(str(black_avg_cpl)),
+                    ui.tags.td(f"{black_elo:.0f}"),
                 ),
             ),
         )
