@@ -1,46 +1,21 @@
 from __future__ import annotations
 
-import io
-import math
 import queue
 import threading
-import time
-from datetime import datetime, timedelta
 
 import chess
-import chess.pgn
 import chess.svg
-from analysis.stockfish import clamp_score, evaluate_positions, stream_analysis
+from analysis_engine import (
+    annotate_game_worker,
+    calculate_estimated_elo,
+    classify_delta,
+    stream_analysis_worker,
+)
+from game_utils import board_at_ply, extract_game_info, move_rows, parse_pgn
 from shiny import reactive, render, ui
 from shinyswatch import theme_picker_server
 
 BOARD_SIZE = 360
-
-
-def parse_pgn(pgn_text: str):
-    game = chess.pgn.read_game(io.StringIO(pgn_text))
-    if game is None:
-        raise ValueError("No game found in PGN input.")
-
-    board = game.board()
-    moves = []
-    sans = []
-    for move in game.mainline_moves():
-        sans.append(board.san(move))
-        moves.append(move)
-        board.push(move)
-
-    return game, moves, sans
-
-
-def move_rows(sans: list[str]) -> list[tuple[int, str, str]]:
-    rows = []
-    for idx in range(0, len(sans), 2):
-        move_no = idx // 2 + 1
-        white = sans[idx]
-        black = sans[idx + 1] if idx + 1 < len(sans) else ""
-        rows.append((move_no, white, black))
-    return rows
 
 
 def server(input, output, session):
@@ -96,82 +71,9 @@ def server(input, output, session):
 
     session.on_ended(_shutdown_analysis)
 
-    def _parse_date(value: str | None):
-        if not value or "?" in value:
-            return None
-        try:
-            return datetime.strptime(value, "%Y.%m.%d").date()
-        except ValueError:
-            return None
-
-    def _parse_time(value: str | None):
-        if not value or "?" in value:
-            return None
-        for fmt in ("%H:%M:%S", "%H:%M"):
-            try:
-                return datetime.strptime(value, fmt).time()
-            except ValueError:
-                continue
-        return None
-
-    def _parse_datetime(date_value: str | None, time_value: str | None):
-        date_part = _parse_date(date_value)
-        time_part = _parse_time(time_value)
-        if date_part and time_part:
-            return datetime.combine(date_part, time_part)
-        return None
-
-    def _format_dt(value: datetime | None) -> str:
-        if value is None:
-            return "Unknown"
-        return value.strftime("%Y-%m-%d %H:%M:%S")
-
-    def _format_duration(start: datetime | None, end: datetime | None) -> str:
-        if start is None or end is None:
-            return "Unknown"
-        delta = end - start
-        if delta.total_seconds() < 0:
-            delta += timedelta(days=1)
-        seconds = int(delta.total_seconds())
-        hours, remainder = divmod(seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-    def _set_game_info(game: chess.pgn.Game | None) -> None:
-        if game is None:
-            info_val.set(
-                {
-                    "start": "Unknown",
-                    "end": "Unknown",
-                    "duration": "Unknown",
-                    "white": "Unknown",
-                    "black": "Unknown",
-                    "white_elo": "Unknown",
-                    "black_elo": "Unknown",
-                }
-            )
-            return
-
-        headers = game.headers
-        start_dt = _parse_datetime(
-            headers.get("UTCDate") or headers.get("Date"),
-            headers.get("UTCTime") or headers.get("Time"),
-        )
-        end_dt = _parse_datetime(
-            headers.get("EndDate") or headers.get("UTCDate") or headers.get("Date"),
-            headers.get("EndTime"),
-        )
-        info_val.set(
-            {
-                "start": _format_dt(start_dt),
-                "end": _format_dt(end_dt),
-                "duration": _format_duration(start_dt, end_dt),
-                "white": headers.get("White", "Unknown"),
-                "black": headers.get("Black", "Unknown"),
-                "white_elo": headers.get("WhiteElo", "Unknown"),
-                "black_elo": headers.get("BlackElo", "Unknown"),
-            }
-        )
+    def _set_game_info(game):
+        """Update game info reactive value."""
+        info_val.set(extract_game_info(game))
 
     def _load_pgn(pgn_text: str) -> None:
         if not pgn_text.strip():
@@ -255,47 +157,9 @@ def server(input, output, session):
     def _last_move():
         ply_val.set(len(moves_val()))
 
-    def _classify_delta(delta_cp: int) -> str:
-        cpl = max(0, -delta_cp)
-        if cpl >= 300:
-            return "??"
-        if cpl >= 150:
-            return "?"
-        if cpl >= 70:
-            return "?!"
-        return ""
-
-    def _summarize_annotations(
-        annotations: dict[int, str],
-        cpl_by_ply: dict[int, int],
-        total_plies: int,
-    ) -> dict[str, dict[str, int | float]]:
-        labels = ["??", "?", "?!"]
-        counts = {
-            "White": {label: 0 for label in labels},
-            "Black": {label: 0 for label in labels},
-        }
-        neutral = {"White": 0, "Black": 0}
-        totals = {"White": 0, "Black": 0}
-        moves = {"White": 0, "Black": 0}
-        for ply in range(1, total_plies + 1):
-            side = "White" if ply % 2 == 1 else "Black"
-            moves[side] += 1
-            totals[side] += cpl_by_ply.get(ply, 0)
-            label = annotations.get(ply, "")
-            if label:
-                counts[side][label] += 1
-            else:
-                neutral[side] += 1
-        counts["White"]["OK"] = neutral["White"]
-        counts["Black"]["OK"] = neutral["Black"]
-        counts["White"]["avg_cpl"] = (
-            totals["White"] / moves["White"] if moves["White"] else 0.0
-        )
-        counts["Black"]["avg_cpl"] = (
-            totals["Black"] / moves["Black"] if moves["Black"] else 0.0
-        )
-        return counts
+    def _board_at_ply(ply: int) -> chess.Board:
+        """Get board at specific ply."""
+        return board_at_ply(game_val(), moves_val(), ply)
 
     @reactive.Effect
     @reactive.event(input.annotate_moves)
@@ -336,56 +200,14 @@ def server(input, output, session):
         summary_val.set({})
         annotation_status.set("running")
 
-        def worker(
-            base_fen: str,
-            move_list: list[chess.Move],
-            stop_event: threading.Event,
-            out_queue: queue.Queue,
-            time_limit: float,
-            worker_count: int,
-        ):
-            try:
-                start_time = time.monotonic()
-                base_board = chess.Board(base_fen)
-                evals = evaluate_positions(
-                    base_board,
-                    move_list,
-                    time_limit=time_limit,
-                    workers=worker_count,
-                    stop_event=stop_event,
-                )
-                if stop_event.is_set() or len(evals) <= 1:
-                    return
-                label_annotations: dict[int, str] = {}
-                display_annotations: dict[int, str] = {}
-                cpl_by_ply: dict[int, int] = {}
-                for ply in range(1, len(evals)):
-                    prev_cp = clamp_score(evals[ply - 1])
-                    curr_cp = clamp_score(evals[ply])
-                    delta = curr_cp - prev_cp
-                    mover_is_white = (ply % 2) == 1
-                    delta_for_mover = delta if mover_is_white else -delta
-                    cpl_cp = max(0, -int(delta_for_mover))
-                    cpl_by_ply[ply] = cpl_cp
-                    label = _classify_delta(delta_for_mover)
-                    if label:
-                        display_annotations[ply] = f"{label} ({cpl_cp})"
-                        label_annotations[ply] = label
-                summary = _summarize_annotations(
-                    label_annotations, cpl_by_ply, len(move_list)
-                )
-                summary["meta"] = {"duration_sec": time.monotonic() - start_time}
-                out_queue.put((current_id, display_annotations, summary))
-            except Exception:
-                out_queue.put((current_id, {}, {}))
-
         annotation_thread = threading.Thread(
-            target=worker,
+            target=annotate_game_worker,
             args=(
                 game.board().fen(),
                 moves,
                 annotation_stop,
                 local_queue,
+                current_id,
                 think_time,
                 thread_count,
             ),
@@ -449,44 +271,19 @@ def server(input, output, session):
         analysis_done.set(False)
         engine_move_val.set(None)
 
-        def worker(
-            fen_str: str,
-            prev_fen_str: str | None,
-            stop_event: threading.Event,
-            out_queue: queue.Queue,
-        ):
-            try:
-                board_obj = chess.Board(fen_str)
-                prev_board = chess.Board(prev_fen_str) if prev_fen_str else None
-                for delta_cp, lines, best_move, prev_pv, done in stream_analysis(
-                    board_obj,
-                    time_limit=think_time,
-                    multipv=multipv,
-                    threads=engine_threads,
-                    stop_event=stop_event,
-                    best_move_board=prev_board,
-                ):
-                    if stop_event.is_set():
-                        break
-                    if delta_cp is None:
-                        out_queue.put(
-                            (current_id, None, lines, best_move, prev_pv, done)
-                        )
-                        continue
-                    # Convert white-POV delta to mover CPL for display.
-                    delta_for_mover = delta_cp if mover_is_white else -delta_cp
-                    cpl = max(0, -delta_for_mover)
-                    out_queue.put(
-                        (current_id, cpl, lines, best_move, prev_pv, done)
-                    )
-            except Exception as exc:
-                out_queue.put(
-                    (current_id, f"Engine unavailable: {exc}", [], None, None, True)
-                )
-
         analysis_thread = threading.Thread(
-            target=worker,
-            args=(fen, prev_fen, analysis_stop, local_queue),
+            target=stream_analysis_worker,
+            args=(
+                fen,
+                prev_fen,
+                analysis_stop,
+                local_queue,
+                current_id,
+                mover_is_white,
+                think_time,
+                multipv,
+                engine_threads,
+            ),
             daemon=True,
         )
         analysis_thread.start()
@@ -650,12 +447,8 @@ def server(input, output, session):
             if annotation_text:
                 label = annotation_text.split()[0]
             elif cpl_value is not None:
-                if cpl_value >= 300:
-                    label = "??"
-                elif cpl_value >= 150:
-                    label = "?"
-                elif cpl_value >= 70:
-                    label = "?!"
+                # classify_delta expects negative for bad moves
+                label = classify_delta(-cpl_value)
             if label:
                 annotation = f" {label}"
 
@@ -770,8 +563,8 @@ def server(input, output, session):
         black_avg = float(black_counts.get("avg_cpl", 0.0))
         white_avg_cpl = round(white_avg)
         black_avg_cpl = round(black_avg)
-        white_elo = 3100 * math.exp(-0.01 * white_avg_cpl)
-        black_elo = 3100 * math.exp(-0.01 * black_avg_cpl)
+        white_elo = calculate_estimated_elo(white_avg)
+        black_elo = calculate_estimated_elo(black_avg)
         note = (
             ui.p("Analyzing...", class_="text-muted mb-1")
             if status == "running"
