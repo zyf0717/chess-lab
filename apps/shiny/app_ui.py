@@ -209,8 +209,8 @@ app_ui = ui.page_navbar(
                     "annotation_metric",
                     "Annotation metric",
                     choices={
-                        "cpl": "Centipawn loss",
-                        "wdl": "Expected score (from WDL)",
+                        "cpl": "Centipawn loss (CPL)",
+                        "wdl": "Expected score (WDL)",
                     },
                     selected="wdl",
                 ),

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import queue
 import threading
 import time
@@ -76,11 +75,6 @@ def summarize_annotations(
         totals["Black"] / moves["Black"] if moves["Black"] else 0.0
     )
     return counts
-
-
-def calculate_estimated_elo(avg_cpl: float) -> float:
-    """Estimate Elo rating from average CPL."""
-    return 3100 * math.exp(-0.01 * avg_cpl)
 
 
 def annotate_game_worker(

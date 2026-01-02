@@ -9,7 +9,6 @@ import chess.svg
 import plotly.graph_objects as go
 from analysis import (
     annotate_game_worker,
-    calculate_estimated_elo,
     classify_delta,
     stream_analysis_worker,
 )
@@ -607,7 +606,6 @@ def server(input, output, session):
         return render_summary_table(
             summary_val(),
             annotation_status(),
-            calculate_estimated_elo,
             input.annotation_metric() or "cpl",
         )
 

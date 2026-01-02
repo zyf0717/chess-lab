@@ -60,7 +60,6 @@ def render_pv_list(
 def render_summary_table(
     summary: dict,
     status: str,
-    calculate_elo_func,
     annotation_metric: str = "cpl",
 ) -> ui.Tag:
     """Render the annotation summary table."""
@@ -80,8 +79,6 @@ def render_summary_table(
     black_avg = float(black_counts.get("avg_cpl", 0.0))
     white_avg_cpl = round(white_avg)
     black_avg_cpl = round(black_avg)
-    white_elo = calculate_elo_func(white_avg)
-    black_elo = calculate_elo_func(black_avg)
 
     note = (
         ui.p("Analyzing...", class_="text-muted mb-1") if status == "running" else None
@@ -105,7 +102,6 @@ def render_summary_table(
                 ui.tags.th("Player"),
                 *[ui.tags.th(label) for label in order],
                 ui.tags.th("Avg CPL"),
-                ui.tags.th("Est Elo"),
             )
         ),
         ui.tags.tbody(
@@ -113,13 +109,11 @@ def render_summary_table(
                 ui.tags.td("White"),
                 *[ui.tags.td(str(white_counts.get(label, 0))) for label in order],
                 ui.tags.td(str(white_avg_cpl)),
-                ui.tags.td(f"{white_elo:.0f}"),
             ),
             ui.tags.tr(
                 ui.tags.td("Black"),
                 *[ui.tags.td(str(black_counts.get(label, 0))) for label in order],
                 ui.tags.td(str(black_avg_cpl)),
-                ui.tags.td(f"{black_elo:.0f}"),
             ),
         ),
     )
@@ -192,8 +186,8 @@ def render_game_info_table(info: dict[str, str]) -> ui.Tag:
                 ui.tags.th("Start"),
                 ui.tags.th("End"),
                 ui.tags.th("Duration"),
-                ui.tags.th("White (Elo)"),
-                ui.tags.th("Black (Elo)"),
+                ui.tags.th("White"),
+                ui.tags.th("Black"),
             )
         ),
         ui.tags.tbody(
@@ -255,6 +249,7 @@ def format_eval_line(
             else:
                 annotation = "OK"
         else:
+
             def _label_from_wdl(curr: float | None, prev: float | None) -> str | None:
                 if curr is None or prev is None:
                     return None
