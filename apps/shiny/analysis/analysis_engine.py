@@ -12,15 +12,7 @@ from analysis.stockfish import clamp_score, evaluate_positions, stream_analysis
 
 
 def classify_delta(delta_cp: int) -> str:
-    """Classify move quality based on centipawn loss.
-
-    Args:
-        delta_cp: Change in evaluation (mover perspective)
-
-    Returns:
-        Error annotation symbol: \"??\" (≥300 CPL), \"?\" (≥150 CPL),
-        \"?!\" (≥70 CPL), or \"\" (no error, <70 CPL)
-    """
+    """Classify centipawn loss into symbols."""
     cpl = max(0, -delta_cp)
     if cpl >= 300:
         return "??"
@@ -32,16 +24,7 @@ def classify_delta(delta_cp: int) -> str:
 
 
 def classify_wdl_delta(delta_score: float) -> str:
-    """Classify move quality based on expected score drop.
-
-    Args:
-        delta_score: Change in expected score (mover perspective)
-
-    Returns:
-        Quality label: "Best" (no loss), "Excellent" (0.00-0.02 loss),
-        "Good" (0.02-0.05 loss), "?!" (0.05-0.10 loss), "?" (0.10-0.20 loss),
-        or "??" (≥0.20 loss)
-    """
+    """Classify expected score loss."""
     loss = max(0.0, -delta_score)
     if loss >= 0.20:
         return "??"
@@ -61,19 +44,7 @@ def summarize_annotations(
     cpl_by_ply: dict[int, int],
     total_plies: int,
 ) -> dict[str, dict[str, int | float]]:
-    """Generate summary statistics from move annotations.
-
-    Args:
-        annotations: Map of ply to annotation label ("??", "?", "?!", "Good",
-                     "Excellent", "Best", or empty for unmarked moves)
-        cpl_by_ply: Map of ply to centipawn loss
-        total_plies: Total number of plies in game
-
-    Returns:
-        Dictionary with statistics for White and Black, including counts for
-        all quality categories: "Best", "Excellent", "Good", "?!", "?", "??"
-        Also includes "OK" count (sum of Best + Excellent + Good + unmarked)
-    """
+    """Summarize annotation counts and averages."""
     all_labels = ["Best", "Excellent", "Good", "?!", "?", "??"]
     error_labels = ["??", "?", "?!"]
     counts = {
@@ -108,14 +79,7 @@ def summarize_annotations(
 
 
 def calculate_estimated_elo(avg_cpl: float) -> float:
-    """Estimate Elo rating from average centipawn loss.
-
-    Args:
-        avg_cpl: Average centipawn loss
-
-    Returns:
-        Estimated Elo rating
-    """
+    """Estimate Elo rating from average CPL."""
     return 3100 * math.exp(-0.01 * avg_cpl)
 
 
@@ -129,17 +93,7 @@ def annotate_game_worker(
     worker_count: int,
     annotation_metric: str = "cpl",
 ):
-    """Worker function to annotate all moves in a game.
-
-    Args:
-        base_fen: Starting FEN position
-        move_list: List of moves to analyze
-        stop_event: Threading event to signal stop
-        out_queue: Queue to put results
-        current_id: Analysis session ID
-        time_limit: Time limit per position
-        worker_count: Number of engine threads
-    """
+    """Annotate all moves in a game."""
     try:
         start_time = time.monotonic()
         base_board = chess.Board(base_fen)
@@ -165,14 +119,9 @@ def annotate_game_worker(
         display_annotations: dict[int, str] = {}
         cpl_by_ply: dict[int, int] = {}
 
-        # Generate SAN notation to check for checkmate
         board_copy = chess.Board(base_fen)
-        sans = []
-        for move in move_list:
-            sans.append(board_copy.san(move))
-            board_copy.push(move)
-
         for ply in range(1, len(evals)):
+            board_copy.push(move_list[ply - 1])
             prev_cp = clamp_score(evals[ply - 1])
             curr_cp = clamp_score(evals[ply])
             delta = curr_cp - prev_cp
@@ -181,10 +130,7 @@ def annotate_game_worker(
             cpl_cp = max(0, -int(delta_for_mover))
             cpl_by_ply[ply] = cpl_cp
 
-            # Check if move is checkmate
-            is_checkmate = sans[ply - 1].endswith("#")
-
-            if is_checkmate:
+            if board_copy.is_checkmate():
                 # Checkmate is always marked as OK - don't add any annotation
                 # (no entry in label_annotations means it's counted as "OK")
                 pass
@@ -238,19 +184,7 @@ def stream_analysis_worker(
     multipv: int,
     engine_threads: int,
 ):
-    """Worker function for streaming position analysis.
-
-    Args:
-        fen_str: FEN string of position to analyze
-        prev_fen_str: FEN of previous position (for best move comparison)
-        stop_event: Threading event to signal stop
-        out_queue: Queue to put results
-        current_id: Analysis session ID
-        mover_is_white: Whether white is to move
-        think_time: Analysis time limit
-        multipv: Number of principal variations
-        engine_threads: Number of engine threads
-    """
+    """Stream analysis updates for a position."""
     try:
         board_obj = chess.Board(fen_str)
         prev_board = chess.Board(prev_fen_str) if prev_fen_str else None

@@ -1,48 +1,52 @@
-"""State management utilities for the Shiny app."""
+"""State helpers for the Shiny app."""
 
 from __future__ import annotations
 
 
-def reset_game_state(reactive_values: dict) -> None:
-    """Reset all game-related reactive values to initial state.
+DEFAULT_INFO = {
+    "start": "Unknown",
+    "end": "Unknown",
+    "duration": "Unknown",
+    "white": "Unknown",
+    "black": "Unknown",
+    "white_elo": "Unknown",
+    "black_elo": "Unknown",
+}
 
-    Args:
-        reactive_values: Dictionary of reactive value objects to reset
-    """
-    reactive_values["game"].set(None)
-    reactive_values["moves"].set([])
-    reactive_values["sans"].set([])
-    reactive_values["ply"].set(0)
-    reactive_values["analysis_ready"].set(False)
-    reactive_values["eval"].set("CPL: --")
-    reactive_values["pv"].set([])
-    reactive_values["annotations"].set({})
-    reactive_values["summary"].set({})
-    reactive_values["annotation_status"].set("idle")
-    reactive_values["evals"].set([])
-    reactive_values["engine_move"].set(None)
-    reactive_values["info"].set(
-        {
-            "start": "Unknown",
-            "end": "Unknown",
-            "duration": "Unknown",
-            "white": "Unknown",
-            "black": "Unknown",
-            "white_elo": "Unknown",
-            "black_elo": "Unknown",
-        }
-    )
+_DEFAULT_STATE = {
+    "game": None,
+    "moves": list,
+    "sans": list,
+    "ply": 0,
+    "analysis_ready": False,
+    "analysis_done": False,
+    "eval": "CPL: --",
+    "pv": list,
+    "prev_pv": list,
+    "annotations": dict,
+    "label_annotations": dict,
+    "summary": dict,
+    "annotation_status": "idle",
+    "evals": list,
+    "wdl_scores": list,
+    "wdl": None,
+    "prev_wdl": None,
+    "engine_move": None,
+    "info": lambda: DEFAULT_INFO.copy(),
+}
+
+
+def reset_game_state(reactive_values: dict) -> None:
+    """Reset reactive values to defaults."""
+    for key, default in _DEFAULT_STATE.items():
+        if key not in reactive_values:
+            continue
+        value = default() if callable(default) else default
+        reactive_values[key].set(value)
 
 
 def get_input_params(input_obj) -> dict:
-    """Extract and validate analysis parameters from input.
-
-    Args:
-        input_obj: Shiny input object
-
-    Returns:
-        Dictionary with validated parameters
-    """
+    """Extract and clamp engine parameters."""
     try:
         think_time = float(input_obj.think_time())
     except (TypeError, ValueError):

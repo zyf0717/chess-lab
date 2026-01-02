@@ -1,8 +1,6 @@
 import logging
 
-from app_server import server
-from app_ui import app_ui
-from shiny import App
+from app import app
 
 # Configure logging
 logging.basicConfig(
@@ -12,5 +10,4 @@ logging.basicConfig(
 )
 
 if __name__ == "__main__":
-    app = App(app_ui, server)
     app.run(port=8008)

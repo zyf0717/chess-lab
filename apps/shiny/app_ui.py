@@ -17,10 +17,6 @@ CUSTOM_CSS = """
         --board-size: 360px;
     }
 
-    :root {
-        --board-size: 360px;
-    }
-
     .board-frame {
         min-height: var(--board-size);
         display: flex;
@@ -96,102 +92,82 @@ CUSTOM_CSS = """
 
 # JS utility for enabling/disabling elements visually and functionally
 CUSTOM_JS = """
-    Shiny.addCustomMessageHandler("toggle_disabled", function(msg) {
-        var el = document.getElementById(msg.id);
-        if (!el) return;
+    const scrollSelectedIntoView = () => {
+        const container = document.getElementById("move_table_container");
+        if (!container) return;
+        const selected = container.querySelector("td.is-selected");
+        if (!selected) return;
+        const selectedRect = selected.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        if (selectedRect.top < containerRect.top || selectedRect.bottom > containerRect.bottom) {
+            selected.scrollIntoView({ block: "nearest" });
+        }
+    };
 
-        if (msg.disabled) {
-            el.setAttribute("disabled", "disabled");
-        } else {
-            el.removeAttribute("disabled");
+    const observeMoveTable = () => {
+        const container = document.getElementById("move_table_container");
+        if (!container || container._observerAttached) return;
+        const observer = new MutationObserver(() => scrollSelectedIntoView());
+        observer.observe(container, { childList: true, subtree: true });
+        container._observerAttached = true;
+    };
+
+    document.addEventListener("click", (event) => {
+        const cell = event.target.closest("td[data-ply]");
+        if (!cell) return;
+
+        const table = cell.closest("table");
+        if (table) {
+            table.querySelectorAll("td.is-selected").forEach((td) => {
+                td.classList.remove("is-selected");
+            });
         }
 
-        // Visual cues for disabled state
-        el.style.opacity = msg.disabled ? "0.6" : "1.0";
-        var label = document.querySelector("label[for='" + msg.id + "']");
-        if (label) label.style.opacity = msg.disabled ? "0.5" : "1.0";
+        cell.classList.add("is-selected");
+        const ply = parseInt(cell.dataset.ply, 10);
+        if (Number.isNaN(ply)) return;
+
+        if (window.Shiny && Shiny.setInputValue) {
+            Shiny.setInputValue("move_cell", { ply: ply }, { priority: "event" });
+        }
+
+        scrollSelectedIntoView();
     });
 
-    const scrollSelectedIntoView = () => {
-            const container = document.getElementById("move_table_container");
-            if (!container) return;
-            const selected = container.querySelector("td.is-selected");
-            if (!selected) return;
-            const selectedRect = selected.getBoundingClientRect();
-            const containerRect = container.getBoundingClientRect();
-            if (selectedRect.top < containerRect.top || selectedRect.bottom > containerRect.bottom) {
-                selected.scrollIntoView({ block: "nearest" });
+    document.addEventListener("DOMContentLoaded", observeMoveTable);
+    document.addEventListener("shiny:connected", observeMoveTable);
+
+    document.addEventListener("keydown", (event) => {
+        if (event.target.tagName === "INPUT" || event.target.tagName === "TEXTAREA") {
+            return;
+        }
+
+        if (event.key === "ArrowLeft") {
+            event.preventDefault();
+            const prevButton = document.getElementById("prev_move");
+            if (prevButton) {
+                prevButton.click();
+                prevButton.blur();
             }
-        };
-
-        const observeMoveTable = () => {
-            const container = document.getElementById("move_table_container");
-            if (!container || container._observerAttached) return;
-            const observer = new MutationObserver(() => scrollSelectedIntoView());
-            observer.observe(container, { childList: true, subtree: true });
-            container._observerAttached = true;
-        };
-
-        document.addEventListener("click", (event) => {
-            const cell = event.target.closest("td[data-ply]");
-            if (!cell) return;
-
-            const table = cell.closest("table");
-            if (table) {
-                table.querySelectorAll("td.is-selected").forEach((td) => {
-                    td.classList.remove("is-selected");
-                });
+        } else if (event.key === "ArrowRight") {
+            event.preventDefault();
+            const nextButton = document.getElementById("next_move");
+            if (nextButton) {
+                nextButton.click();
+                nextButton.blur();
             }
-
-            cell.classList.add("is-selected");
-            const ply = parseInt(cell.dataset.ply, 10);
-            if (Number.isNaN(ply)) return;
-
+        } else if (event.key === "ArrowUp") {
+            event.preventDefault();
             if (window.Shiny && Shiny.setInputValue) {
-                Shiny.setInputValue("move_cell", { ply: ply }, { priority: "event" });
+                Shiny.setInputValue("move_back_2", Math.random(), { priority: "event" });
             }
-
-            scrollSelectedIntoView();
-        });
-
-        document.addEventListener("DOMContentLoaded", observeMoveTable);
-        document.addEventListener("shiny:connected", observeMoveTable);
-
-        // Handle keyboard arrow keys for move navigation
-        document.addEventListener("keydown", (event) => {
-            // Only handle if not typing in an input field
-            if (event.target.tagName === "INPUT" || event.target.tagName === "TEXTAREA") {
-                return;
+        } else if (event.key === "ArrowDown") {
+            event.preventDefault();
+            if (window.Shiny && Shiny.setInputValue) {
+                Shiny.setInputValue("move_forward_2", Math.random(), { priority: "event" });
             }
-
-            if (event.key === "ArrowLeft") {
-                event.preventDefault();
-                const prevButton = document.getElementById("prev_move");
-                if (prevButton) {
-                    prevButton.click();
-                    prevButton.blur();
-                }
-            } else if (event.key === "ArrowRight") {
-                event.preventDefault();
-                const nextButton = document.getElementById("next_move");
-                if (nextButton) {
-                    nextButton.click();
-                    nextButton.blur();
-                }
-            } else if (event.key === "ArrowUp") {
-                event.preventDefault();
-                // Send custom input to go back 2 plys
-                if (window.Shiny && Shiny.setInputValue) {
-                    Shiny.setInputValue("move_back_2", Math.random(), { priority: "event" });
-                }
-            } else if (event.key === "ArrowDown") {
-                event.preventDefault();
-                // Send custom input to go forward 2 plys
-                if (window.Shiny && Shiny.setInputValue) {
-                    Shiny.setInputValue("move_forward_2", Math.random(), { priority: "event" });
-                }
-            }
-        });
+        }
+    });
 """
 
 app_ui = ui.page_navbar(

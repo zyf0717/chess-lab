@@ -6,15 +6,7 @@ import plotly.graph_objects as go
 
 
 def create_eval_graph(evals: list[int], status: str) -> go.Figure | go.FigureWidget:
-    """Create evaluation graph for chess position analysis.
-
-    Args:
-        evals: List of evaluations in centipawns
-        status: Annotation status ("running", "idle", etc.)
-
-    Returns:
-        Plotly figure or FigureWidget
-    """
+    """Build the evaluation graph."""
     # Show evaluating message when annotation is running
     if status == "running":
         return _create_placeholder_graph("Evaluating...")
@@ -119,14 +111,7 @@ def create_eval_graph(evals: list[int], status: str) -> go.Figure | go.FigureWid
 
 
 def _create_placeholder_graph(message: str) -> go.Figure:
-    """Create placeholder graph with message.
-
-    Args:
-        message: Message to display
-
-    Returns:
-        Plotly figure with annotation
-    """
+    """Return a placeholder graph with a message."""
     fig = go.Figure()
     fig.add_annotation(
         text=message,

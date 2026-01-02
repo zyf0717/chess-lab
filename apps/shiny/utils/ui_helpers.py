@@ -7,26 +7,12 @@ from shiny import ui
 
 
 def normalize_san(san: str) -> str:
-    """Remove check/checkmate symbols from SAN notation.
-
-    Args:
-        san: Standard algebraic notation move
-
-    Returns:
-        Normalized SAN without +/#
-    """
+    """Strip check symbols from SAN."""
     return san.rstrip("+#")
 
 
 def extract_first_pv_move(pv_line: str) -> str | None:
-    """Extract first move from PV line.
-
-    Args:
-        pv_line: Principal variation line string
-
-    Returns:
-        First move in SAN notation or None
-    """
+    """Return the first move from a PV line."""
     _, sep, pv = pv_line.partition("—")
     pv_part = pv.strip() if sep else pv_line.strip()
     if not pv_part:
@@ -47,19 +33,7 @@ def render_pv_list(
     empty_msg: str = "PV will appear here.",
     highlight_color: str = "success",
 ) -> ui.Tag:
-    """Render principal variation lines with optional highlighting.
-
-    Args:
-        lines: List of PV line strings
-        target_san: SAN move to highlight (if found)
-        highlight_ready: Whether highlighting is enabled
-        title: Title text
-        empty_msg: Message when no lines available
-        highlight_color: Color for highlighting ("success" for green, "warning" for orange)
-
-    Returns:
-        Shiny UI element
-    """
+    """Render principal variation lines."""
     if not lines:
         return ui.p(empty_msg, class_="text-muted")
 
@@ -89,17 +63,7 @@ def render_summary_table(
     calculate_elo_func,
     annotation_metric: str = "cpl",
 ) -> ui.Tag:
-    """Render move annotation summary table.
-
-    Args:
-        summary: Summary dictionary with player statistics
-        status: Annotation status ("running", "idle", etc.)
-        calculate_elo_func: Function to calculate Elo from CPL
-        annotation_metric: Annotation metric ("cpl" or "wdl")
-
-    Returns:
-        Shiny UI element
-    """
+    """Render the annotation summary table."""
     if status == "running" and not summary:
         return ui.p("Analyzing...", class_="text-muted")
     if not summary:
@@ -171,17 +135,7 @@ def render_move_list(
     annotations: dict[int, str],
     move_rows_func,
 ) -> ui.Tag:
-    """Render move list table with annotations.
-
-    Args:
-        sans: List of moves in SAN notation
-        current_ply: Currently selected ply
-        annotations: Map of ply to annotation string
-        move_rows_func: Function to convert sans to display rows
-
-    Returns:
-        Shiny UI element
-    """
+    """Render the move list table."""
     if not sans:
         return ui.p("No moves loaded.", class_="text-muted")
 
@@ -230,14 +184,7 @@ def render_move_list(
 
 
 def render_game_info_table(info: dict[str, str]) -> ui.Tag:
-    """Render game information table.
-
-    Args:
-        info: Dictionary with game metadata
-
-    Returns:
-        Shiny UI table element
-    """
+    """Render the game metadata table."""
     return ui.tags.table(
         {"class": "table table-sm text-center mb-0"},
         ui.tags.thead(
@@ -273,23 +220,7 @@ def format_eval_line(
     wdl_scores: list[float] | None = None,
     prev_wdl_score: float | None = None,
 ) -> str:
-    """Format evaluation line with move and annotation.
-
-    Args:
-        eval_message: Evaluation message or centipawn value
-        ply: Current ply number
-        sans: List of moves in SAN notation
-        annotations: Dictionary mapping ply to annotation
-        classify_func: Function to classify centipawn loss
-        pv_lines: Principal variation lines
-        wdl_score: Current position's WDL expected score
-        annotation_metric: Metric for annotations ("cpl" or "expected_score")
-        wdl_scores: All WDL scores from annotate game (for fallback)
-        prev_wdl_score: Previous position's WDL expected score from live analysis
-
-    Returns:
-        Formatted evaluation string
-    """
+    """Format the eval header line."""
     if isinstance(eval_message, str) and eval_message.startswith("Engine unavailable"):
         return eval_message
 
@@ -324,29 +255,21 @@ def format_eval_line(
             else:
                 annotation = "OK"
         else:
-            # For WDL metric: calculate quality label from WDL scores
-            # Prefer live analysis scores (wdl_score + prev_wdl_score)
-            if wdl_score is not None and prev_wdl_score is not None and ply > 0:
-                # Use live analysis WDL scores
-                wdl_delta = wdl_score - prev_wdl_score
-                # Adjust for mover perspective
+            def _label_from_wdl(curr: float | None, prev: float | None) -> str | None:
+                if curr is None or prev is None:
+                    return None
                 mover_is_white = (ply % 2) == 1
-                wdl_delta_for_mover = wdl_delta if mover_is_white else -wdl_delta
-                annotation = classify_wdl_delta(wdl_delta_for_mover)
-            elif wdl_scores and len(wdl_scores) > ply and ply > 0:
-                # Fallback to annotate game WDL scores
-                curr_wdl = wdl_scores[ply]
-                prev_wdl = wdl_scores[ply - 1]
-                if curr_wdl is not None and prev_wdl is not None:
-                    wdl_delta = curr_wdl - prev_wdl
-                    # Adjust for mover perspective
-                    mover_is_white = (ply % 2) == 1
-                    wdl_delta_for_mover = wdl_delta if mover_is_white else -wdl_delta
-                    annotation = classify_wdl_delta(wdl_delta_for_mover)
-                else:
-                    annotation = "--"
-            else:
-                annotation = "--"
+                delta = curr - prev
+                delta_for_mover = delta if mover_is_white else -delta
+                return classify_wdl_delta(delta_for_mover)
+
+            annotation = _label_from_wdl(wdl_score, prev_wdl_score) or "--"
+            if annotation == "--" and wdl_scores and len(wdl_scores) > ply:
+                annotation = (
+                    _label_from_wdl(wdl_scores[ply], wdl_scores[ply - 1]) or "--"
+                )
+            if annotation == "--" and annotations:
+                annotation = annotations.get(ply, "--")
 
         # Parse eval from top PV line (format: "+0.25 — e4 e5 Nf3" or "Mate in 3 — ...")
         if pv_lines and len(pv_lines) > 0:

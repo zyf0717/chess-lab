@@ -2,9 +2,11 @@
 
 from .chart_utils import create_eval_graph
 from .game_utils import board_at_ply, extract_game_info, move_rows, parse_pgn
-from .state_utils import get_input_params, reset_game_state
+from .state_utils import DEFAULT_INFO, get_input_params, reset_game_state
 from .ui_helpers import (
+    extract_first_pv_move,
     format_eval_line,
+    normalize_san,
     render_game_info_table,
     render_move_list,
     render_pv_list,
@@ -19,7 +21,10 @@ __all__ = [
     "parse_pgn",
     "get_input_params",
     "reset_game_state",
+    "DEFAULT_INFO",
+    "extract_first_pv_move",
     "format_eval_line",
+    "normalize_san",
     "render_game_info_table",
     "render_move_list",
     "render_pv_list",

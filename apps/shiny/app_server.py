@@ -17,12 +17,15 @@ from shiny import reactive, render, ui
 from shinyswatch import theme_picker_server
 from shinywidgets import render_widget
 from utils import (
+    DEFAULT_INFO,
     board_at_ply,
     create_eval_graph,
+    extract_first_pv_move,
     extract_game_info,
     format_eval_line,
     get_input_params,
     move_rows,
+    normalize_san,
     parse_pgn,
     render_game_info_table,
     render_move_list,
@@ -62,17 +65,7 @@ def server(input, output, session):
     annotation_status = reactive.Value("idle")
     evals_val = reactive.Value([])
     wdl_scores_val = reactive.Value([])
-    info_val = reactive.Value(
-        {
-            "start": "Unknown",
-            "end": "Unknown",
-            "duration": "Unknown",
-            "white": "Unknown",
-            "black": "Unknown",
-            "white_elo": "Unknown",
-            "black_elo": "Unknown",
-        }
-    )
+    info_val = reactive.Value(DEFAULT_INFO.copy())
     analysis_queue: queue.Queue[
         tuple[
             int,
@@ -81,130 +74,138 @@ def server(input, output, session):
             str | None,
             list[str] | None,
             float | None,
+            float | None,
             bool,
         ]
     ] = queue.Queue()
     analysis_thread: threading.Thread | None = None
     analysis_stop: threading.Event | None = None
     analysis_id = 0
-    last_analysis_key: tuple[str, int, float] | None = None
+    last_analysis_key: tuple[str, int, float, int] | None = None
     engine_move_val = reactive.Value(None)
     eval_trigger_time = reactive.Value(0.0)  # Track when to trigger eval
     annotation_queue: queue.Queue[
-        tuple[int, dict[int, str], dict[str, dict[str, int]], list[int], list[float]]
+        tuple[
+            int,
+            dict[int, str],
+            dict[int, str],
+            dict[str, dict[str, int | float]],
+            list[int],
+            list[float],
+        ]
     ] = queue.Queue()
     annotation_thread: threading.Thread | None = None
     annotation_stop: threading.Event | None = None
     annotation_id = 0
 
+    state = {
+        "game": game_val,
+        "moves": moves_val,
+        "sans": sans_val,
+        "ply": ply_val,
+        "analysis_ready": analysis_ready,
+        "analysis_done": analysis_done,
+        "eval": eval_val,
+        "pv": pv_val,
+        "prev_pv": prev_pv_val,
+        "annotations": annotations_val,
+        "label_annotations": label_annotations_val,
+        "summary": summary_val,
+        "annotation_status": annotation_status,
+        "evals": evals_val,
+        "wdl_scores": wdl_scores_val,
+        "wdl": wdl_val,
+        "prev_wdl": prev_wdl_val,
+        "engine_move": engine_move_val,
+        "info": info_val,
+    }
+
+    def _stop_worker(
+        stop_event: threading.Event | None, thread: threading.Thread | None
+    ) -> None:
+        if stop_event is not None:
+            stop_event.set()
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1.0)
+
     def _shutdown_analysis() -> None:
-        if analysis_stop is not None:
-            analysis_stop.set()
-        if analysis_thread is not None and analysis_thread.is_alive():
-            analysis_thread.join(timeout=1.0)
-        if annotation_stop is not None:
-            annotation_stop.set()
-        if annotation_thread is not None and annotation_thread.is_alive():
-            annotation_thread.join(timeout=1.0)
+        _stop_worker(analysis_stop, analysis_thread)
+        _stop_worker(annotation_stop, annotation_thread)
 
     session.on_ended(_shutdown_analysis)
 
     def _set_game_info(game):
-        """Update game info reactive value."""
+        """Refresh game metadata."""
         info_val.set(extract_game_info(game))
 
-    def _load_pgn(pgn_text: str) -> None:
-        reactive_vals = {
-            "game": game_val,
-            "moves": moves_val,
-            "sans": sans_val,
-            "ply": ply_val,
-            "analysis_ready": analysis_ready,
-            "eval": eval_val,
-            "pv": pv_val,
-            "annotations": annotations_val,
-            "label_annotations": label_annotations_val,
-            "summary": summary_val,
-            "annotation_status": annotation_status,
-            "evals": evals_val,
-            "engine_move": engine_move_val,
-            "info": info_val,
-        }
+    def _set_ply(ply: int) -> None:
+        """Use for navigation; direct ply_val.set() for reset/load to avoid extra deps."""
+        total = len(moves_val())
+        ply = max(0, min(ply, total))
+        if ply != ply_val():
+            ply_val.set(ply)
 
+    def _load_pgn(pgn_text: str) -> None:
         if not pgn_text.strip():
-            reset_game_state(reactive_vals)
+            reset_game_state(state)
             return
 
+        reset_game_state(state)
         try:
             game, moves, sans = parse_pgn(pgn_text)
         except ValueError:
-            reset_game_state(reactive_vals)
             return
 
         game_val.set(game)
         moves_val.set(moves)
         sans_val.set(sans)
+        # Avoid _set_ply here to keep _auto_analyze independent of ply changes.
+        # See _set_ply() for details.
         ply_val.set(0)
         analysis_ready.set(True)
-        annotations_val.set({})
-        label_annotations_val.set({})
-        summary_val.set({})
-        annotation_status.set("idle")
-        engine_move_val.set(None)
+        analysis_done.set(False)
         _set_game_info(game)
 
     @reactive.Effect
     def _auto_analyze():
-        pgn_text = ""
         upload = input.pgn_upload()
         if upload:
             path = upload[0]["datapath"]
             with open(path, "r", encoding="utf-8") as handle:
-                pgn_text = handle.read()
+                _load_pgn(handle.read())
+                return
 
-        if not pgn_text.strip():
-            pgn_text = input.pgn_text() or ""
-        _load_pgn(pgn_text)
+        _load_pgn(input.pgn_text() or "")
 
     @reactive.Effect
     @reactive.event(input.prev_move)
     def _prev_move():
-        ply = ply_val()
-        if ply > 0:
-            ply_val.set(ply - 1)
+        _set_ply(ply_val() - 1)
 
     @reactive.Effect
     @reactive.event(input.next_move)
     def _next_move():
-        ply = ply_val()
-        moves = moves_val()
-        if ply < len(moves):
-            ply_val.set(ply + 1)
+        _set_ply(ply_val() + 1)
 
     @reactive.Effect
     @reactive.event(input.first_move)
     def _first_move():
-        ply_val.set(0)
+        _set_ply(0)
 
     @reactive.Effect
     @reactive.event(input.last_move)
     def _last_move():
-        ply_val.set(len(moves_val()))
+        _set_ply(len(moves_val()))
 
     @reactive.Effect
     @reactive.event(input.move_back_2)
     def _move_back_2():
-        ply = ply_val()
-        new_ply = max(0, ply - 2)
-        ply_val.set(new_ply)
+        _set_ply(ply_val() - 2)
 
     @reactive.Effect
     @reactive.event(input.move_forward_2)
     def _move_forward_2():
-        ply = ply_val()
-        moves = moves_val()
-        new_ply = min(len(moves), ply + 2)
-        ply_val.set(new_ply)
+        _set_ply(ply_val() + 2)
 
     def _board_at_ply(ply: int) -> chess.Board:
         """Get board at specific ply."""
@@ -226,6 +227,7 @@ def server(input, output, session):
             summary_val.set({})
             evals_val.set([])
             wdl_scores_val.set([])
+            annotation_status.set("idle")
             return
 
         params = get_input_params(input)
@@ -238,7 +240,12 @@ def server(input, output, session):
         annotation_stop = threading.Event()
         local_queue: queue.Queue[
             tuple[
-                int, dict[int, str], dict[str, dict[str, int]], list[int], list[float]
+                int,
+                dict[int, str],
+                dict[int, str],
+                dict[str, dict[str, int | float]],
+                list[int],
+                list[float],
             ]
         ] = queue.Queue()
         annotation_queue = local_queue
@@ -382,58 +389,55 @@ def server(input, output, session):
             mover_is_white = (ply % 2) == 1
             _start_streaming_eval(board, prev_fen, mover_is_white)
 
+    def _drain_latest_eval():
+        latest = None
+        analysis_complete = False
+        while True:
+            try:
+                item = analysis_queue.get_nowait()
+            except queue.Empty:
+                break
+            if item[0] == analysis_id:
+                latest = item
+                analysis_complete = analysis_complete or item[-1]
+        return latest, analysis_complete
+
+    def _drain_latest_annotation():
+        latest = None
+        while True:
+            try:
+                item = annotation_queue.get_nowait()
+            except queue.Empty:
+                break
+            if item[0] == annotation_id:
+                latest = item
+        return latest
+
     @reactive.Effect
     def _drain_eval_queue():
         nonlocal analysis_queue, analysis_id
         reactive.invalidate_later(0.2)
-        latest_set = False
-        latest = None
-        latest_lines = None
-        latest_move = None
-        latest_prev_pv = None
-        latest_wdl = None
-        latest_prev_wdl = None
-        analysis_complete = False
-        while True:
-            try:
-                (
-                    message_id,
-                    message,
-                    lines,
-                    best_move,
-                    prev_pv,
-                    wdl_score,
-                    prev_wdl_score,
-                    done,
-                ) = analysis_queue.get_nowait()
-            except queue.Empty:
-                break
-            if message_id == analysis_id:
-                latest_set = True
-                latest = message
-                latest_lines = lines
-                latest_move = best_move
-                latest_prev_pv = prev_pv
-                latest_wdl = wdl_score
-                latest_prev_wdl = prev_wdl_score
-                analysis_complete = analysis_complete or done
-        if latest_set:
-            if isinstance(latest, str) and latest.startswith("Engine unavailable"):
-                eval_val.set(latest)
-            elif latest is None:
-                eval_val.set("CPL: --")
-            else:
-                eval_val.set(f"CPL: {latest}")
-        if latest_lines is not None:
-            pv_val.set(latest_lines)
-        if latest_prev_pv is not None:
-            prev_pv_val.set(latest_prev_pv)
-        if latest_move is not None:
-            engine_move_val.set(latest_move)
-        if latest_wdl is not None:
-            wdl_val.set(latest_wdl)
-        if latest_prev_wdl is not None:
-            prev_wdl_val.set(latest_prev_wdl)
+        latest, analysis_complete = _drain_latest_eval()
+        if latest is None:
+            return
+        _, message, lines, best_move, prev_pv, wdl_score, prev_wdl_score, _ = latest
+
+        if isinstance(message, str) and message.startswith("Engine unavailable"):
+            eval_val.set(message)
+        elif message is None:
+            eval_val.set("CPL: --")
+        else:
+            eval_val.set(f"CPL: {message}")
+
+        pv_val.set(lines)
+        if prev_pv is not None:
+            prev_pv_val.set(prev_pv)
+        if best_move is not None:
+            engine_move_val.set(best_move)
+        if wdl_score is not None:
+            wdl_val.set(wdl_score)
+        if prev_wdl_score is not None:
+            prev_wdl_val.set(prev_wdl_score)
         if analysis_complete:
             analysis_done.set(True)
 
@@ -441,38 +445,16 @@ def server(input, output, session):
     def _drain_annotation_queue():
         nonlocal annotation_queue, annotation_id
         reactive.invalidate_later(0.4)
-        latest_annotations = None
-        latest_label_annotations = None
-        latest_summary = None
-        latest_evals = None
-        latest_wdl_scores = None
-        while True:
-            try:
-                (
-                    message_id,
-                    annotations,
-                    label_annotations,
-                    summary,
-                    evals,
-                    wdl_scores,
-                ) = annotation_queue.get_nowait()
-            except queue.Empty:
-                break
-            if message_id == annotation_id:
-                latest_annotations = annotations
-                latest_label_annotations = label_annotations
-                latest_summary = summary
-                latest_evals = evals
-                latest_wdl_scores = wdl_scores
-        if latest_annotations is not None:
-            annotations_val.set(latest_annotations)
-        if latest_label_annotations is not None:
-            label_annotations_val.set(latest_label_annotations)
-        if latest_summary is not None:
-            summary_val.set(latest_summary)
-            evals_val.set(latest_evals if latest_evals else [])
-            wdl_scores_val.set(latest_wdl_scores if latest_wdl_scores else [])
-            annotation_status.set("idle")
+        latest = _drain_latest_annotation()
+        if latest is None:
+            return
+        _, annotations, label_annotations, summary, evals, wdl_scores = latest
+        annotations_val.set(annotations)
+        label_annotations_val.set(label_annotations)
+        summary_val.set(summary)
+        evals_val.set(evals if evals else [])
+        wdl_scores_val.set(wdl_scores if wdl_scores else [])
+        annotation_status.set("idle")
 
     @reactive.Effect
     @reactive.event(input.move_cell)
@@ -485,11 +467,7 @@ def server(input, output, session):
             ply = int(ply)
         except (TypeError, ValueError):
             return
-
-        total = len(moves_val())
-        ply = max(0, min(ply, total))
-        if ply != ply_val():
-            ply_val.set(ply)
+        _set_ply(ply)
 
     @render.ui
     def board_view():
@@ -596,9 +574,6 @@ def server(input, output, session):
         # Check if next move matches top engine move
         highlight_color = "success"  # Default green
         if analysis_done() and next_san and pv_lines:
-            # Extract first move from top PV line
-            from utils.ui_helpers import extract_first_pv_move, normalize_san
-
             top_engine_move = extract_first_pv_move(pv_lines[0])
             if top_engine_move:
                 moves_match = normalize_san(top_engine_move) == normalize_san(next_san)
@@ -658,10 +633,7 @@ def server(input, output, session):
                 """Handle click events on the graph."""
                 if points and points.point_inds:
                     clicked_ply = plies[points.point_inds[0]]
-                    total = len(moves_val())
-                    clicked_ply = max(0, min(clicked_ply, total))
-                    if clicked_ply != ply_val():
-                        ply_val.set(clicked_ply)
+                    _set_ply(clicked_ply)
 
             # Attach click handler to all traces
             for trace in fw.data:

@@ -194,16 +194,7 @@ def clamp_score(score_cp: int, threshold: int = 1000) -> int:
 
 
 def wdl_expected_score(wdl) -> float | None:
-    """
-    Compute the expected score for White from win/draw/loss (WDL) statistics,
-    using the formula:
-
-        (wins + 0.5 * draws) / total
-
-    Returns:
-        float | None: A value between 0.0 and 1.0 representing the expected
-        score for White, or ``None`` if it cannot be computed.
-    """
+    """Return expected score for White from WDL stats."""
     if wdl is None:
         return None
     try:
@@ -224,20 +215,21 @@ def wdl_expected_score(wdl) -> float | None:
     return (wins + 0.5 * draws) / total
 
 
-class StockfishAnalyzer:
-    def __init__(self, path: Path):
-        self._engine = chess.engine.SimpleEngine.popen_uci(str(path))
-
-    def analyse(
-        self, board: chess.Board, depth: int = 12, time_limit: float = 0.1
-    ) -> str:
-        limit = chess.engine.Limit(depth=depth, time=time_limit)
-        info = self._engine.analyse(board, limit)
-        score = info["score"].pov(chess.WHITE)
-        return format_score(score)
-
-    def close(self) -> None:
-        self._engine.quit()
+def _configure_engine(
+    engine: chess.engine.SimpleEngine,
+    threads: int | None = None,
+    include_wdl: bool = False,
+) -> None:
+    if threads is not None:
+        try:
+            engine.configure({"Threads": max(1, int(threads))})
+        except Exception:
+            pass
+    if include_wdl:
+        try:
+            engine.configure({"UCI_ShowWDL": True})
+        except Exception:
+            pass
 
 
 def stream_analysis(
@@ -253,18 +245,7 @@ def stream_analysis(
     path = ensure_stockfish_binary()
     engine = chess.engine.SimpleEngine.popen_uci(str(path))
     try:
-        try:
-            engine.configure({"Threads": max(1, int(threads))})
-        except Exception:
-            pass
-        try:
-            engine.configure({"UCI_ShowWDL": True})
-        except Exception:
-            pass
-        try:
-            engine.configure({"UCI_ShowWDL": True})
-        except Exception:
-            pass
+        _configure_engine(engine, threads=threads, include_wdl=True)
         if depth is None:
             limit = chess.engine.Limit(time=time_limit)
         else:
@@ -376,19 +357,7 @@ def evaluate_positions(
     stop_event=None,
     include_wdl: bool = False,
 ) -> list[int] | tuple[list[int], list[float]]:
-    """Evaluate a sequence of positions with Stockfish.
-    Args:
-        board: The starting board position.
-        moves: A list of moves to apply sequentially.
-        time_limit: Time limit per position in seconds.
-        workers: Number of parallel worker threads.
-        stop_event: Optional threading.Event to signal early stopping.
-        include_wdl: Whether to include WDL expected scores.
-    Returns:
-        list[int] | tuple[list[int], list[float]]: A list of centipawn scores for each
-        position (including the starting position). If ``include_wdl`` is ``True``,
-        also returns a list of WDL expected scores.
-    """
+    """Evaluate positions with Stockfish."""
     if stop_event is not None and stop_event.is_set():
         return ([], []) if include_wdl else []
 
@@ -397,11 +366,7 @@ def evaluate_positions(
     if workers <= 1:
         engine = chess.engine.SimpleEngine.popen_uci(str(path))
         try:
-            if include_wdl:
-                try:
-                    engine.configure({"UCI_ShowWDL": True})
-                except Exception:
-                    pass
+            _configure_engine(engine, include_wdl=include_wdl)
             limit = chess.engine.Limit(time=time_limit)
             evals: list[int] = []
             wdl_scores: list[float] = []
@@ -459,15 +424,7 @@ def evaluate_positions(
     ) -> list[tuple[int, int, float | None]]:
         engine = chess.engine.SimpleEngine.popen_uci(str(path))
         try:
-            try:
-                engine.configure({"Threads": 1})
-            except Exception:
-                pass
-            if include_wdl:
-                try:
-                    engine.configure({"UCI_ShowWDL": True})
-                except Exception:
-                    pass
+            _configure_engine(engine, threads=1, include_wdl=include_wdl)
             limit = chess.engine.Limit(time=time_limit)
             results: list[tuple[int, int, float | None]] = []
             for idx, fen in fen_batch:

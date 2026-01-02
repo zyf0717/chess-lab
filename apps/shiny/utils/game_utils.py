@@ -10,17 +10,7 @@ import chess.pgn
 
 
 def parse_pgn(pgn_text: str):
-    """Parse PGN text and return game, moves, and SAN notation.
-
-    Args:
-        pgn_text: PGN format game text
-
-    Returns:
-        Tuple of (game, moves, sans)
-
-    Raises:
-        ValueError: If no valid game found in PGN
-    """
+    """Parse PGN text into a game and SAN move list."""
     game = chess.pgn.read_game(io.StringIO(pgn_text))
     if game is None:
         raise ValueError("No game found in PGN input.")
@@ -37,14 +27,7 @@ def parse_pgn(pgn_text: str):
 
 
 def move_rows(sans: list[str]) -> list[tuple[int, str, str]]:
-    """Convert SAN list to display rows with move numbers.
-
-    Args:
-        sans: List of moves in standard algebraic notation
-
-    Returns:
-        List of tuples (move_number, white_move, black_move)
-    """
+    """Group SAN moves into numbered rows."""
     rows = []
     for idx in range(0, len(sans), 2):
         move_no = idx // 2 + 1
@@ -55,7 +38,7 @@ def move_rows(sans: list[str]) -> list[tuple[int, str, str]]:
 
 
 def parse_date(value: str | None) -> datetime.date | None:
-    """Parse PGN date field."""
+    """Parse a PGN date string."""
     if not value or "?" in value:
         return None
     try:
@@ -65,7 +48,7 @@ def parse_date(value: str | None) -> datetime.date | None:
 
 
 def parse_time(value: str | None) -> datetime.time | None:
-    """Parse PGN time field."""
+    """Parse a PGN time string."""
     if not value or "?" in value:
         return None
     for fmt in ("%H:%M:%S", "%H:%M"):
@@ -77,7 +60,7 @@ def parse_time(value: str | None) -> datetime.time | None:
 
 
 def parse_datetime(date_value: str | None, time_value: str | None) -> datetime | None:
-    """Combine PGN date and time fields into datetime."""
+    """Combine PGN date and time."""
     date_part = parse_date(date_value)
     time_part = parse_time(time_value)
     if date_part and time_part:
@@ -86,14 +69,14 @@ def parse_datetime(date_value: str | None, time_value: str | None) -> datetime |
 
 
 def format_datetime(value: datetime | None) -> str:
-    """Format datetime for display."""
+    """Format a datetime for display."""
     if value is None:
         return "Unknown"
     return value.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def format_duration(start: datetime | None, end: datetime | None) -> str:
-    """Calculate and format game duration."""
+    """Format the duration between timestamps."""
     if start is None or end is None:
         return "Unknown"
     delta = end - start
@@ -106,14 +89,7 @@ def format_duration(start: datetime | None, end: datetime | None) -> str:
 
 
 def extract_game_info(game: chess.pgn.Game | None) -> dict[str, str]:
-    """Extract game metadata from PGN headers.
-
-    Args:
-        game: Chess game object or None
-
-    Returns:
-        Dictionary with game info fields
-    """
+    """Extract PGN headers into display strings."""
     if game is None:
         return {
             "start": "Unknown",
@@ -149,16 +125,7 @@ def extract_game_info(game: chess.pgn.Game | None) -> dict[str, str]:
 def board_at_ply(
     game: chess.pgn.Game | None, moves: list[chess.Move], ply: int
 ) -> chess.Board:
-    """Get board position at a specific ply.
-
-    Args:
-        game: Chess game object
-        moves: List of moves
-        ply: Position index (0 = starting position)
-
-    Returns:
-        Board at the specified ply
-    """
+    """Return the board at a given ply."""
     if game is None:
         board = chess.Board()
     else:
