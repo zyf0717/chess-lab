@@ -167,6 +167,11 @@ def server(input, output, session):
 
     @reactive.Effect
     def _auto_analyze():
+        pgn_text = input.pgn_text() or ""
+        if pgn_text.strip():
+            _load_pgn(pgn_text)
+            return
+
         upload = input.pgn_upload()
         if upload:
             path = upload[0]["datapath"]
@@ -174,7 +179,22 @@ def server(input, output, session):
                 _load_pgn(handle.read())
                 return
 
-        _load_pgn(input.pgn_text() or "")
+        _load_pgn("")
+
+    @reactive.Effect
+    @reactive.event(input.pgn_text)
+    def _clear_upload_on_text():
+        pgn_text = input.pgn_text() or ""
+        if not pgn_text.strip():
+            return
+        if input.pgn_upload():
+            session.send_custom_message("clear_pgn_upload", {})
+
+    @reactive.Effect
+    @reactive.event(input.pgn_upload)
+    def _clear_text_on_upload():
+        if input.pgn_upload() and (input.pgn_text() or "").strip():
+            ui.update_text_area("pgn_text", value="")
 
     @reactive.Effect
     @reactive.event(input.prev_move)

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 
 DEFAULT_INFO = {
+    "date_only": False,
+    "date": "Unknown",
     "start": "Unknown",
     "end": "Unknown",
     "duration": "Unknown",

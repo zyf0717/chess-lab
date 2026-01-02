@@ -168,6 +168,18 @@ CUSTOM_JS = """
             }
         }
     });
+
+    Shiny.addCustomMessageHandler("clear_pgn_upload", function() {
+        const upload = document.getElementById("pgn_upload");
+        if (!upload || !upload.value) return;
+        upload.value = "";
+        upload.dispatchEvent(new Event("change", { bubbles: true }));
+        const container = upload.closest(".shiny-input-container") || upload.parentElement;
+        const label = container ? container.querySelector("label") : null;
+        if (label) {
+            label.textContent = "Upload PGN:";
+        }
+    });
 """
 
 app_ui = ui.page_navbar(

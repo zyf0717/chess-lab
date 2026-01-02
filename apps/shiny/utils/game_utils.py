@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 from datetime import datetime, timedelta
 
 import chess
@@ -38,11 +39,22 @@ def move_rows(sans: list[str]) -> list[tuple[int, str, str]]:
 
 
 def parse_date(value: str | None) -> datetime.date | None:
-    """Parse a PGN date string."""
+    """Parse a date string with flexible separators."""
     if not value or "?" in value:
         return None
+    parts = [p for p in re.split(r"\D+", value.strip()) if p]
+    if len(parts) == 1 and len(parts[0]) == 8:
+        parts = [parts[0][:4], parts[0][4:6], parts[0][6:]]
+    if len(parts) != 3:
+        return None
+    if len(parts[0]) == 4:
+        year, month, day = parts
+    elif len(parts[2]) == 4:
+        year, month, day = parts[2], parts[1], parts[0]
+    else:
+        year, month, day = parts
     try:
-        return datetime.strptime(value, "%Y.%m.%d").date()
+        return datetime(int(year), int(month), int(day)).date()
     except ValueError:
         return None
 
@@ -75,6 +87,13 @@ def format_datetime(value: datetime | None) -> str:
     return value.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def format_date(value: datetime.date | None) -> str:
+    """Format a date for display."""
+    if value is None:
+        return "Unknown"
+    return value.strftime("%Y-%m-%d")
+
+
 def format_duration(start: datetime | None, end: datetime | None) -> str:
     """Format the duration between timestamps."""
     if start is None or end is None:
@@ -88,7 +107,7 @@ def format_duration(start: datetime | None, end: datetime | None) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
-def extract_game_info(game: chess.pgn.Game | None) -> dict[str, str]:
+def extract_game_info(game: chess.pgn.Game | None) -> dict[str, str | bool]:
     """Extract PGN headers into display strings."""
     if game is None:
         return {
@@ -110,8 +129,20 @@ def extract_game_info(game: chess.pgn.Game | None) -> dict[str, str]:
         headers.get("EndDate") or headers.get("UTCDate") or headers.get("Date"),
         headers.get("EndTime"),
     )
+    date_fallback = format_date(parse_date(headers.get("Date")))
+
+    if start_dt is None or end_dt is None:
+        return {
+            "date_only": True,
+            "date": date_fallback,
+            "white": headers.get("White", "Unknown"),
+            "black": headers.get("Black", "Unknown"),
+            "white_elo": headers.get("WhiteElo", "Unknown"),
+            "black_elo": headers.get("BlackElo", "Unknown"),
+        }
 
     return {
+        "date_only": False,
         "start": format_datetime(start_dt),
         "end": format_datetime(end_dt),
         "duration": format_duration(start_dt, end_dt),

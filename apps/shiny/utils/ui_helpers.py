@@ -177,8 +177,26 @@ def render_move_list(
     )
 
 
-def render_game_info_table(info: dict[str, str]) -> ui.Tag:
+def render_game_info_table(info: dict[str, str | bool]) -> ui.Tag:
     """Render the game metadata table."""
+    if info.get("date_only"):
+        return ui.tags.table(
+            {"class": "table table-sm text-center mb-0"},
+            ui.tags.thead(
+                ui.tags.tr(
+                    ui.tags.th("Date"),
+                    ui.tags.th("White"),
+                    ui.tags.th("Black"),
+                )
+            ),
+            ui.tags.tbody(
+                ui.tags.tr(
+                    ui.tags.td(info.get("date", "Unknown")),
+                    ui.tags.td(f"{info['white']} ({info['white_elo']})"),
+                    ui.tags.td(f"{info['black']} ({info['black_elo']})"),
+                )
+            ),
+        )
     return ui.tags.table(
         {"class": "table table-sm text-center mb-0"},
         ui.tags.thead(
