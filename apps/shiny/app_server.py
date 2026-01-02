@@ -32,6 +32,14 @@ from utils import (
 
 BOARD_SIZE = 480
 
+# Greyscale color palette for chess board
+BOARD_COLORS = {
+    "square light": "#E8E8E8",  # Very light grey
+    "square dark": "#A0A0A0",  # Medium greyish
+    "margin": "#303030",  # Dark charcoal border
+    "coord": "#FFFFFF",  # White text for A-H, 1-8
+}
+
 
 def server(input, output, session):
     theme_picker_server()
@@ -391,10 +399,16 @@ def server(input, output, session):
         ply = ply_val()
         sans = sans_val()
 
-        # Highlight the last move using the built-in lastmove parameter
-        last_move = None
+        # Show last move as a grey arrow
         if ply > 0 and ply <= len(moves):
             last_move = moves[ply - 1]
+            arrows.append(
+                chess.svg.Arrow(
+                    last_move.from_square,
+                    last_move.to_square,
+                    color="#808080",  # Grey arrow
+                )
+            )
 
         # Show best move arrow only after analysis is complete
         best_move_uci = engine_move_val()
@@ -439,8 +453,8 @@ def server(input, output, session):
         svg = chess.svg.board(
             board=board,
             size=BOARD_SIZE,
-            lastmove=last_move,
             arrows=arrows,
+            colors=BOARD_COLORS,
         )
         return ui.HTML(svg)
 
