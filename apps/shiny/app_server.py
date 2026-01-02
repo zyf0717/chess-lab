@@ -79,7 +79,7 @@ def server(input, output, session):
     engine_move_val = reactive.Value(None)
     eval_trigger_time = reactive.Value(0.0)  # Track when to trigger eval
     annotation_queue: queue.Queue[
-        tuple[int, dict[int, str], dict[str, dict[str, int]], list[int]]
+        tuple[int, dict[int, str], dict[str, dict[str, int | float]], list[int]]
     ] = queue.Queue()
     annotation_thread: threading.Thread | None = None
     annotation_stop: threading.Event | None = None
@@ -216,12 +216,13 @@ def server(input, output, session):
         params = get_input_params(input)
         think_time = params["think_time"]
         thread_count = params["threads"]
+        annotation_metric = params["annotation_metric"]
 
         if annotation_stop is not None:
             annotation_stop.set()
         annotation_stop = threading.Event()
         local_queue: queue.Queue[
-            tuple[int, dict[int, str], dict[str, dict[str, int]], list[int]]
+            tuple[int, dict[int, str], dict[str, dict[str, int | float]], list[int]]
         ] = queue.Queue()
         annotation_queue = local_queue
         annotation_id += 1
@@ -242,6 +243,7 @@ def server(input, output, session):
                 current_id,
                 think_time,
                 thread_count,
+                annotation_metric,
             ),
             daemon=True,
         )
