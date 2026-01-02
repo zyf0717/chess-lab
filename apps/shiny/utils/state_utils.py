@@ -61,8 +61,13 @@ def get_input_params(input_obj) -> dict:
         multipv = 3
     multipv = max(1, min(multipv, 8))
 
+    annotation_metric = input_obj.annotation_metric()
+    if annotation_metric not in {"cpl", "wdl"}:
+        annotation_metric = "cpl"
+
     return {
         "think_time": think_time,
         "threads": thread_count,
         "multipv": multipv,
+        "annotation_metric": annotation_metric,
     }

@@ -229,6 +229,15 @@ app_ui = ui.page_navbar(
                     ),
                     open=False,
                 ),
+                ui.input_select(
+                    "annotation_metric",
+                    "Annotation metric:",
+                    choices={
+                        "cpl": "CPL (centipawn loss)",
+                        "wdl": "WDL% (win/draw/loss)",
+                    },
+                    selected="cpl",
+                ),
                 ui.input_action_button("annotate_moves", "Annotate Game"),
                 ui.hr(),
                 theme_picker_ui(),
