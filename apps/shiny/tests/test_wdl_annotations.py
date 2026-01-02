@@ -1,15 +1,9 @@
-from pathlib import Path
-import sys
-
 import pytest
 
 pytest.importorskip("chess")
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(ROOT))
-
-from analysis.analysis_engine import classify_wdl_delta  # noqa: E402
-from analysis.stockfish import wdl_expected_score  # noqa: E402
+from analysis.analysis_engine import classify_wdl_delta
+from analysis.stockfish import wdl_expected_score
 
 
 class DummyWdl:
