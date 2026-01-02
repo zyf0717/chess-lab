@@ -395,7 +395,7 @@ def server(input, output, session):
         if ply > 0 and ply <= len(moves):
             last_move = moves[ply - 1]
 
-        # Show best move as green arrow only after analysis is complete
+        # Show best move arrow only after analysis is complete
         best_move_uci = engine_move_val()
         if best_move_uci and analysis_done():
             try:
@@ -411,7 +411,10 @@ def server(input, output, session):
                 pass
 
         svg = chess.svg.board(
-            board=board, size=BOARD_SIZE, lastmove=last_move, arrows=arrows
+            board=board,
+            size=BOARD_SIZE,
+            lastmove=last_move,
+            arrows=arrows,
         )
         return ui.HTML(svg)
 

@@ -3,7 +3,7 @@ from shiny import ui
 from shinyswatch import theme_picker_ui
 from shinywidgets import output_widget
 
-app_ui = ui.page_fluid(
+app_ui = ui.page_fillable(
     ui.tags.style(
         """
         :root {
@@ -203,16 +203,12 @@ app_ui = ui.page_fluid(
                     ui.hr(),
                     theme_picker_ui(),
                 ),
-                ui.row(
-                    ui.column(
-                        12,
-                        ui.card(
-                            ui.card_header("Game Info"),
-                            ui.output_ui("game_info"),
-                        ),
-                    ),
-                    ui.column(
-                        8,
+                ui.card(
+                    ui.card_header("Game Info"),
+                    ui.output_ui("game_info"),
+                ),
+                ui.layout_columns(
+                    ui.div(
                         ui.card(
                             ui.card_header("Board"),
                             ui.div(ui.output_ui("board_view"), class_="board-frame"),
@@ -231,8 +227,7 @@ app_ui = ui.page_fluid(
                             ui.output_ui("prev_pv"),
                         ),
                     ),
-                    ui.column(
-                        4,
+                    ui.div(
                         ui.card(
                             ui.card_header("Moves"),
                             ui.div(
@@ -250,6 +245,7 @@ app_ui = ui.page_fluid(
                             output_widget("eval_graph"),
                         ),
                     ),
+                    col_widths=[7, 5],
                 ),
             ),
         ),
