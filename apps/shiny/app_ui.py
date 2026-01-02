@@ -221,11 +221,11 @@ app_ui = ui.page_navbar(
                 ui.hr(),
                 theme_picker_ui(),
             ),
-            ui.card(
-                ui.card_header("Game Info"),
-                ui.output_ui("game_info"),
-            ),
             ui.layout_columns(
+                ui.card(
+                    ui.card_header("Game Info"),
+                    ui.output_ui("game_info"),
+                ),
                 ui.div(
                     ui.card(
                         ui.card_header("Board"),
@@ -263,7 +263,7 @@ app_ui = ui.page_navbar(
                         output_widget("eval_graph"),
                     ),
                 ),
-                col_widths=[7, 5],
+                col_widths=[12, 7, 5],
             ),
         ),
     ),

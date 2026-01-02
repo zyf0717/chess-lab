@@ -44,6 +44,7 @@ def render_pv_list(
     highlight_ready: bool,
     title: str = "PV:",
     empty_msg: str = "PV will appear here.",
+    highlight_color: str = "success",
 ) -> ui.Tag:
     """Render principal variation lines with optional highlighting.
 
@@ -53,6 +54,7 @@ def render_pv_list(
         highlight_ready: Whether highlighting is enabled
         title: Title text
         empty_msg: Message when no lines available
+        highlight_color: Color for highlighting ("success" for green, "warning" for orange)
 
     Returns:
         Shiny UI element
@@ -70,7 +72,7 @@ def render_pv_list(
             is_match = first_move_norm == target_norm
 
         if highlight_ready and is_match:
-            items.append(ui.tags.li(line, class_="text-success"))
+            items.append(ui.tags.li(line, class_=f"text-{highlight_color}"))
         else:
             items.append(ui.tags.li(line))
 

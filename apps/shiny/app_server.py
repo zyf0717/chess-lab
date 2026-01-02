@@ -389,6 +389,7 @@ def server(input, output, session):
         arrows = []
         moves = moves_val()
         ply = ply_val()
+        sans = sans_val()
 
         # Highlight the last move using the built-in lastmove parameter
         last_move = None
@@ -400,13 +401,38 @@ def server(input, output, session):
         if best_move_uci and analysis_done():
             try:
                 best_move = chess.Move.from_uci(best_move_uci)
-                arrows.append(
-                    chess.svg.Arrow(
-                        best_move.from_square,
-                        best_move.to_square,
-                        color="green",
+                # Check if the next actual move matches the engine move
+                next_move = moves[ply] if ply < len(moves) else None
+                moves_match = next_move and next_move.uci() == best_move_uci
+
+                # Green arrow if moves match, otherwise show the engine move in green
+                # and the actual move in orange
+                if moves_match:
+                    arrows.append(
+                        chess.svg.Arrow(
+                            best_move.from_square,
+                            best_move.to_square,
+                            color="green",
+                        )
                     )
-                )
+                else:
+                    # Show engine move in green
+                    arrows.append(
+                        chess.svg.Arrow(
+                            best_move.from_square,
+                            best_move.to_square,
+                            color="green",
+                        )
+                    )
+                    # Show actual next move in orange if it exists
+                    if next_move:
+                        arrows.append(
+                            chess.svg.Arrow(
+                                next_move.from_square,
+                                next_move.to_square,
+                                color="orange",
+                            )
+                        )
             except ValueError:
                 pass
 
@@ -445,13 +471,28 @@ def server(input, output, session):
     def pv():
         ply = ply_val()
         sans = sans_val()
+        pv_lines = pv_val()
         next_san = sans[ply] if ply < len(sans) else None
+
+        # Check if next move matches top engine move
+        highlight_color = "success"  # Default green
+        if analysis_done() and next_san and pv_lines:
+            # Extract first move from top PV line
+            from utils.ui_helpers import extract_first_pv_move, normalize_san
+
+            top_engine_move = extract_first_pv_move(pv_lines[0])
+            if top_engine_move:
+                moves_match = normalize_san(top_engine_move) == normalize_san(next_san)
+                if not moves_match:
+                    highlight_color = "warning"  # Orange for non-matching moves
+
         return render_pv_list(
-            pv_val(),
+            pv_lines,
             next_san,
             analysis_done(),
             title="PV:",
             empty_msg="PV will appear here.",
+            highlight_color=highlight_color,
         )
 
     @render.ui
@@ -462,7 +503,7 @@ def server(input, output, session):
         return render_pv_list(
             prev_pv_val(),
             current_san,
-            analysis_done(),
+            False,  # Disable highlighting for prior ply
             title="Prior ply:",
             empty_msg="Prior ply PV will appear here.",
         )
