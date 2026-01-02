@@ -364,6 +364,55 @@ def evaluate_positions(
     stop_event=None,
     include_wdl: bool = False,
 ) -> list[int] | tuple[list[int], list[float]]:
+    """Evaluate a sequence of positions with Stockfish.
+
+    Starting from ``board``, this function evaluates the current position and
+    each subsequent position obtained by pushing the moves in ``moves`` in
+    order. Evaluations are reported from White's point of view in centipawns.
+
+    When ``workers`` is greater than 1, the intermediate positions are split
+    into chunks and analysed in parallel worker tasks, potentially improving
+    throughput at the cost of higher engine start-up overhead. For a single
+    worker, a single engine instance is reused sequentially.
+
+    If ``stop_event`` is provided and is set before or during analysis, the
+    function aborts early and returns empty results (``[]`` or ``([], [])``
+    depending on ``include_wdl``).
+
+    Parameters
+    ----------
+    board:
+        The starting :class:`chess.Board` position from which analysis begins.
+    moves:
+        A list of :class:`chess.Move` objects to be played on ``board`` in
+        order; each resulting position is evaluated.
+    time_limit:
+        Maximum analysis time per position in seconds (passed as a
+        :class:`chess.engine.Limit` ``time`` argument).
+    workers:
+        Number of worker tasks to use for analysis. Values greater than 1
+        enable parallel evaluation of the generated positions.
+    stop_event:
+        Optional event-like object with an ``is_set()`` method. When set, the
+        analysis is interrupted and empty results are returned.
+    include_wdl:
+        If ``True``, also request and return the engine's WDL (win/draw/loss)
+        expected score for each position when supported by the engine.
+
+    Returns
+    -------
+    list[int] or (list[int], list[float])
+        If ``include_wdl`` is ``False``, returns a list of centipawn
+        evaluations, one for the starting position followed by each position
+        after applying the moves in ``moves``.
+
+        If ``include_wdl`` is ``True``, returns a tuple ``(evals, wdl_scores)``,
+        where ``evals`` is the list of centipawn evaluations as above, and
+        ``wdl_scores`` is a list of expected scores in the range [0.0, 1.0]
+        (probability of White scoring a point) for the corresponding
+        positions. When WDL data is unavailable, a default value of 0.5 is
+        used.
+    """
     if stop_event is not None and stop_event.is_set():
         return ([], []) if include_wdl else []
 
