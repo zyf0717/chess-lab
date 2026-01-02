@@ -278,7 +278,7 @@ def stream_analysis(
             latest: dict[int, tuple[str, str, str | None]] = {}
             latest_delta = None
             latest_lines: list[str] | None = None
-            latest_best = best_move_uci
+            latest_best = None
             for info in analysis:
                 if stop_event is not None and stop_event.is_set():
                     analysis.stop()
@@ -300,7 +300,9 @@ def stream_analysis(
                     ]
                     latest_delta = delta_cp
                     latest_lines = ordered
-                    latest_best = best_move_uci
+                    # Get the best move from the current position (rank 1)
+                    if 1 in latest:
+                        latest_best = latest[1][2]
                     yield latest_delta, latest_lines, latest_best, prev_lines, False
                 if time.monotonic() - start >= time_limit:
                     break

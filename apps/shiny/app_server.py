@@ -219,17 +219,6 @@ def server(input, output, session):
         )
         annotation_thread.start()
 
-    def _board_at_ply(ply: int) -> chess.Board:
-        game = game_val()
-        moves = moves_val()
-        if game is None:
-            board = chess.Board()
-        else:
-            board = game.board()
-            for move in moves[:ply]:
-                board.push(move)
-        return board
-
     def _current_board() -> chess.Board:
         return _board_at_ply(ply_val())
 
@@ -384,30 +373,30 @@ def server(input, output, session):
         arrows = []
         moves = moves_val()
         ply = ply_val()
+
+        # Highlight the last move using the built-in lastmove parameter
+        last_move = None
         if ply > 0 and ply <= len(moves):
             last_move = moves[ply - 1]
-            arrows.append(
-                chess.svg.Arrow(
-                    last_move.from_square,
-                    last_move.to_square,
-                    color="#2f6f5e",
-                )
-            )
+
+        # Show best move as green arrow only after analysis is complete
         best_move_uci = engine_move_val()
-        if best_move_uci:
+        if best_move_uci and analysis_done():
             try:
                 best_move = chess.Move.from_uci(best_move_uci)
                 arrows.append(
                     chess.svg.Arrow(
                         best_move.from_square,
                         best_move.to_square,
-                        color="#c64b2a",
+                        color="#2f6f5e",
                     )
                 )
             except ValueError:
                 pass
 
-        svg = chess.svg.board(board=board, size=BOARD_SIZE, arrows=arrows)
+        svg = chess.svg.board(
+            board=board, size=BOARD_SIZE, lastmove=last_move, arrows=arrows
+        )
         return ui.HTML(svg)
 
     @render.text
