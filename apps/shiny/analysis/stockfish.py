@@ -193,6 +193,37 @@ def clamp_score(score_cp: int, threshold: int = 1000) -> int:
     return max(-threshold, min(score_cp, threshold))
 
 
+def wdl_expected_score(wdl) -> float | None:
+    """
+    Compute the expected score for White from win/draw/loss (WDL) statistics,
+    using the formula:
+
+        (wins + 0.5 * draws) / total
+
+    Returns:
+        float | None: A value between 0.0 and 1.0 representing the expected
+        score for White, or ``None`` if it cannot be computed.
+    """
+    if wdl is None:
+        return None
+    try:
+        wdl = wdl.pov(chess.WHITE)
+    except Exception:
+        pass
+    wins = getattr(wdl, "wins", None)
+    draws = getattr(wdl, "draws", None)
+    losses = getattr(wdl, "losses", None)
+    if wins is None or draws is None or losses is None:
+        try:
+            wins, draws, losses = wdl.wdl()
+        except Exception:
+            return None
+    total = wins + draws + losses
+    if total <= 0:
+        return None
+    return (wins + 0.5 * draws) / total
+
+
 class StockfishAnalyzer:
     def __init__(self, path: Path):
         self._engine = chess.engine.SimpleEngine.popen_uci(str(path))
@@ -218,12 +249,20 @@ def stream_analysis(
     stop_event=None,
     best_move_board: chess.Board | None = None,
 ):
-    """Yield (delta_cp_white, pv_lines, best_move_uci, prev_pv_lines, done)."""
+    """Yield (delta_cp_white, pv_lines, best_move_uci, prev_pv_lines, wdl_score, done)."""
     path = ensure_stockfish_binary()
     engine = chess.engine.SimpleEngine.popen_uci(str(path))
     try:
         try:
             engine.configure({"Threads": max(1, int(threads))})
+        except Exception:
+            pass
+        try:
+            engine.configure({"UCI_ShowWDL": True})
+        except Exception:
+            pass
+        try:
+            engine.configure({"UCI_ShowWDL": True})
         except Exception:
             pass
         if depth is None:
@@ -279,6 +318,7 @@ def stream_analysis(
             latest_delta = None
             latest_lines: list[str] | None = None
             latest_best = None
+            latest_wdl: float | None = None
             for info in analysis:
                 if stop_event is not None and stop_event.is_set():
                     analysis.stop()
@@ -293,6 +333,11 @@ def stream_analysis(
                     line_pv = format_pv(board, info["pv"])
                     rank = int(info.get("multipv", 1))
                     first_move = info["pv"][0].uci() if info["pv"] else None
+
+                    # Get WDL for rank 1 (top line)
+                    if rank == 1:
+                        latest_wdl = wdl_expected_score(info.get("wdl"))
+
                     latest[rank] = (line_score, line_pv, first_move)
                     ordered = [
                         f"{line_score} — {line_pv}"
@@ -303,14 +348,14 @@ def stream_analysis(
                     # Get the best move from the current position (rank 1)
                     if 1 in latest:
                         latest_best = latest[1][2]
-                    yield latest_delta, latest_lines, latest_best, prev_lines, False
+                    yield latest_delta, latest_lines, latest_best, prev_lines, latest_wdl, False
                 if time.monotonic() - start >= time_limit:
                     break
         if stop_event is not None and stop_event.is_set():
             return
         if latest_lines is None:
             latest_lines = []
-        yield latest_delta, latest_lines, latest_best, prev_lines, True
+        yield latest_delta, latest_lines, latest_best, prev_lines, latest_wdl, True
     finally:
         engine.quit()
 
@@ -321,27 +366,66 @@ def evaluate_positions(
     time_limit: float = 1.0,
     workers: int = 1,
     stop_event=None,
-) -> list[int]:
+    include_wdl: bool = False,
+) -> list[int] | tuple[list[int], list[float]]:
+    """Evaluate a sequence of positions with Stockfish.
+    Args:
+        board: The starting board position.
+        moves: A list of moves to apply sequentially.
+        time_limit: Time limit per position in seconds.
+        workers: Number of parallel worker threads.
+        stop_event: Optional threading.Event to signal early stopping.
+        include_wdl: Whether to include WDL expected scores.
+    Returns:
+        list[int] | tuple[list[int], list[float]]: A list of centipawn scores for each
+        position (including the starting position). If ``include_wdl`` is ``True``,
+        also returns a list of WDL expected scores.
+    """
     if stop_event is not None and stop_event.is_set():
-        return []
+        return ([], []) if include_wdl else []
 
     path = ensure_stockfish_binary()
     workers = max(1, int(workers))
     if workers <= 1:
         engine = chess.engine.SimpleEngine.popen_uci(str(path))
         try:
+            if include_wdl:
+                try:
+                    engine.configure({"UCI_ShowWDL": True})
+                except Exception:
+                    pass
             limit = chess.engine.Limit(time=time_limit)
             evals: list[int] = []
+            wdl_scores: list[float] = []
             work_board = board.copy()
             info = engine.analyse(work_board, limit)
-            evals.append(score_to_cp(info["score"].pov(chess.WHITE)))
+            score_pov = info["score"].pov(chess.WHITE)
+            evals.append(score_to_cp(score_pov))
+            if include_wdl:
+                # Check if it's a mate score and handle specially
+                mate = score_pov.mate()
+                if mate is not None:
+                    # Mate: 1.0 for white winning, 0.0 for white losing
+                    wdl_scores.append(1.0 if mate > 0 else 0.0)
+                else:
+                    wdl_scores.append(wdl_expected_score(info.get("wdl")))
             for move in moves:
                 if stop_event is not None and stop_event.is_set():
                     break
                 work_board.push(move)
                 info = engine.analyse(work_board, limit)
-                evals.append(score_to_cp(info["score"].pov(chess.WHITE)))
-            return evals
+                score_pov = info["score"].pov(chess.WHITE)
+                evals.append(score_to_cp(score_pov))
+                if include_wdl:
+                    # Check if it's a mate score and handle specially
+                    mate = score_pov.mate()
+                    if mate is not None:
+                        # Mate: 1.0 for white winning, 0.0 for white losing
+                        wdl_scores.append(1.0 if mate > 0 else 0.0)
+                    else:
+                        # For non-mate positions, use WDL if available, else default to 0.5 (neutral)
+                        wdl_scores.append(wdl_expected_score(info.get("wdl")))
+            return (evals, wdl_scores) if include_wdl else evals
         finally:
             engine.quit()
 
@@ -349,12 +433,12 @@ def evaluate_positions(
     fen_items: list[tuple[int, str]] = [(0, work_board.fen())]
     for idx, move in enumerate(moves, start=1):
         if stop_event is not None and stop_event.is_set():
-            return []
+            return ([], []) if include_wdl else []
         work_board.push(move)
         fen_items.append((idx, work_board.fen()))
 
     if not fen_items:
-        return []
+        return ([], []) if include_wdl else []
 
     workers = min(workers, len(fen_items))
     chunk_size = (len(fen_items) + workers - 1) // workers
@@ -364,32 +448,54 @@ def evaluate_positions(
 
     def _analyse_fens(
         fen_batch: list[tuple[int, str]],
-    ) -> list[tuple[int, int]]:
+    ) -> list[tuple[int, int, float | None]]:
         engine = chess.engine.SimpleEngine.popen_uci(str(path))
         try:
             try:
                 engine.configure({"Threads": 1})
             except Exception:
                 pass
+            if include_wdl:
+                try:
+                    engine.configure({"UCI_ShowWDL": True})
+                except Exception:
+                    pass
             limit = chess.engine.Limit(time=time_limit)
-            results: list[tuple[int, int]] = []
+            results: list[tuple[int, int, float | None]] = []
             for idx, fen in fen_batch:
                 if stop_event is not None and stop_event.is_set():
                     break
                 board_obj = chess.Board(fen)
                 info = engine.analyse(board_obj, limit)
-                results.append((idx, score_to_cp(info["score"].pov(chess.WHITE))))
+                score_pov = info["score"].pov(chess.WHITE)
+                wdl_score = None
+                if include_wdl:
+                    # Check if it's a mate score and handle specially
+                    mate = score_pov.mate()
+                    if mate is not None:
+                        # Mate: 1.0 for white winning, 0.0 for white losing
+                        wdl_score = 1.0 if mate > 0 else 0.0
+                    else:
+                        wdl_score = wdl_expected_score(info.get("wdl"))
+                results.append((idx, score_to_cp(score_pov), wdl_score))
             return results
         finally:
             engine.quit()
 
     results_by_idx: dict[int, int] = {}
+    wdl_by_idx: dict[int, float] = {}
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [executor.submit(_analyse_fens, chunk) for chunk in chunks]
         for future in as_completed(futures):
             if stop_event is not None and stop_event.is_set():
-                return []
-            for idx, score in future.result():
+                return ([], []) if include_wdl else []
+            for idx, score, wdl_score in future.result():
                 results_by_idx[idx] = score
+                if include_wdl:
+                    wdl_by_idx[idx] = wdl_score
 
-    return [results_by_idx.get(idx, 0) for idx in range(len(fen_items))]
+    evals = [results_by_idx.get(idx, 0) for idx in range(len(fen_items))]
+    if include_wdl:
+        wdl_scores = [wdl_by_idx.get(idx) for idx in range(len(fen_items))]
+        return evals, wdl_scores
+    return evals

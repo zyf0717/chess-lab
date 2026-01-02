@@ -260,6 +260,8 @@ def format_eval_line(
     sans: list[str],
     annotations: dict[int, str],
     classify_func,
+    pv_lines: list[str] | None = None,
+    wdl_score: float | None = None,
 ) -> str:
     """Format evaluation line with move and annotation.
 
@@ -269,6 +271,8 @@ def format_eval_line(
         sans: List of moves in SAN notation
         annotations: Map of ply to annotation
         classify_func: Function to classify centipawn delta
+        pv_lines: Optional list of PV lines from engine analysis
+        wdl_score: Optional WDL expected score from engine
 
     Returns:
         Formatted evaluation string
@@ -289,18 +293,39 @@ def format_eval_line(
 
     move_text = "--"
     move_prefix = ""
-    annotation = ""
+    annotation = "--"
+    eval_display = "--"
+    es_display = "--"
+
     if ply > 0 and ply <= len(sans):
         move_no = (ply + 1) // 2
         move_prefix = f"{move_no}. " if (ply % 2) == 1 else f"{move_no}... "
         move_text = sans[ply - 1]
+
+        # Get annotation
         annotation_text = annotations.get(ply, "")
-        label = ""
         if annotation_text:
-            label = annotation_text.split()[0]
+            annotation = annotation_text.split()[0]
         elif cpl_value is not None:
             label = classify_func(-cpl_value)
-        if label:
-            annotation = f" {label}"
+            annotation = label if label else "OK"
+        else:
+            annotation = "OK"
 
-    return f"Move: {move_prefix}{move_text}{annotation} ({cpl_display})"
+        # Parse eval from top PV line (format: "+0.25 — e4 e5 Nf3" or "Mate in 3 — ...")
+        if pv_lines and len(pv_lines) > 0:
+            top_pv = pv_lines[0]
+            if " — " in top_pv:
+                eval_part = top_pv.split(" — ")[0].strip()
+                # Check if it's a mate score
+                if "Mate" in eval_part:
+                    eval_display = eval_part
+                else:
+                    # It's a regular eval like "+0.25" or "-1.50"
+                    eval_display = eval_part
+
+        # ES (Expected Score) from WDL
+        if wdl_score is not None:
+            es_display = f"{wdl_score:.2f}"
+
+    return f"{move_prefix}{move_text} | {annotation} | Eval: {eval_display} | CPL: {cpl_display} | ES: {es_display}"

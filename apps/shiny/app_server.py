@@ -52,12 +52,14 @@ def server(input, output, session):
     eval_val = reactive.Value("CPL: --")
     pv_val = reactive.Value([])
     prev_pv_val = reactive.Value([])
+    wdl_val = reactive.Value(None)
     analysis_done = reactive.Value(False)
     analysis_ready = reactive.Value(False)
     annotations_val = reactive.Value({})
     summary_val = reactive.Value({})
     annotation_status = reactive.Value("idle")
     evals_val = reactive.Value([])
+    wdl_scores_val = reactive.Value([])
     info_val = reactive.Value(
         {
             "start": "Unknown",
@@ -70,7 +72,15 @@ def server(input, output, session):
         }
     )
     analysis_queue: queue.Queue[
-        tuple[int, int | str | None, list[str], str | None, list[str] | None, bool]
+        tuple[
+            int,
+            int | str | None,
+            list[str],
+            str | None,
+            list[str] | None,
+            float | None,
+            bool,
+        ]
     ] = queue.Queue()
     analysis_thread: threading.Thread | None = None
     analysis_stop: threading.Event | None = None
@@ -79,7 +89,7 @@ def server(input, output, session):
     engine_move_val = reactive.Value(None)
     eval_trigger_time = reactive.Value(0.0)  # Track when to trigger eval
     annotation_queue: queue.Queue[
-        tuple[int, dict[int, str], dict[str, dict[str, int]], list[int]]
+        tuple[int, dict[int, str], dict[str, dict[str, int]], list[int], list[float]]
     ] = queue.Queue()
     annotation_thread: threading.Thread | None = None
     annotation_stop: threading.Event | None = None
@@ -211,17 +221,21 @@ def server(input, output, session):
             annotations_val.set({})
             summary_val.set({})
             evals_val.set([])
+            wdl_scores_val.set([])
             return
 
         params = get_input_params(input)
         think_time = params["think_time"]
         thread_count = params["threads"]
+        annotation_metric = input.annotation_metric() or "cpl"
 
         if annotation_stop is not None:
             annotation_stop.set()
         annotation_stop = threading.Event()
         local_queue: queue.Queue[
-            tuple[int, dict[int, str], dict[str, dict[str, int]], list[int]]
+            tuple[
+                int, dict[int, str], dict[str, dict[str, int]], list[int], list[float]
+            ]
         ] = queue.Queue()
         annotation_queue = local_queue
         annotation_id += 1
@@ -242,6 +256,7 @@ def server(input, output, session):
                 current_id,
                 think_time,
                 thread_count,
+                annotation_metric,
             ),
             daemon=True,
         )
@@ -291,6 +306,7 @@ def server(input, output, session):
         eval_val.set("CPL: …")
         pv_val.set([])
         prev_pv_val.set([])
+        wdl_val.set(None)
         analysis_done.set(False)
         engine_move_val.set(None)
 
@@ -361,10 +377,11 @@ def server(input, output, session):
         latest_lines = None
         latest_move = None
         latest_prev_pv = None
+        latest_wdl = None
         analysis_complete = False
         while True:
             try:
-                message_id, message, lines, best_move, prev_pv, done = (
+                message_id, message, lines, best_move, prev_pv, wdl_score, done = (
                     analysis_queue.get_nowait()
                 )
             except queue.Empty:
@@ -375,6 +392,7 @@ def server(input, output, session):
                 latest_lines = lines
                 latest_move = best_move
                 latest_prev_pv = prev_pv
+                latest_wdl = wdl_score
                 analysis_complete = analysis_complete or done
         if latest_set:
             if isinstance(latest, str) and latest.startswith("Engine unavailable"):
@@ -389,6 +407,8 @@ def server(input, output, session):
             prev_pv_val.set(latest_prev_pv)
         if latest_move is not None:
             engine_move_val.set(latest_move)
+        if latest_wdl is not None:
+            wdl_val.set(latest_wdl)
         if analysis_complete:
             analysis_done.set(True)
 
@@ -399,20 +419,25 @@ def server(input, output, session):
         latest_annotations = None
         latest_summary = None
         latest_evals = None
+        latest_wdl_scores = None
         while True:
             try:
-                message_id, annotations, summary, evals = annotation_queue.get_nowait()
+                message_id, annotations, summary, evals, wdl_scores = (
+                    annotation_queue.get_nowait()
+                )
             except queue.Empty:
                 break
             if message_id == annotation_id:
                 latest_annotations = annotations
                 latest_summary = summary
                 latest_evals = evals
+                latest_wdl_scores = wdl_scores
         if latest_annotations is not None:
             annotations_val.set(latest_annotations)
         if latest_summary is not None:
             summary_val.set(latest_summary)
             evals_val.set(latest_evals if latest_evals else [])
+            wdl_scores_val.set(latest_wdl_scores if latest_wdl_scores else [])
             annotation_status.set("idle")
 
     @reactive.Effect
@@ -507,6 +532,8 @@ def server(input, output, session):
             sans_val(),
             annotations_val(),
             classify_delta,
+            pv_val(),
+            wdl_val(),
         )
 
     @render.ui
