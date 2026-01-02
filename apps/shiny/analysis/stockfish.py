@@ -194,6 +194,26 @@ def clamp_score(score_cp: int, threshold: int = 1000) -> int:
 
 
 def wdl_expected_score(wdl) -> float | None:
+    """
+    Compute the expected score for White from win/draw/loss (WDL) statistics.
+
+    The input ``wdl`` is expected to be an object representing WDL information.
+    It may provide ``wins``, ``draws``, and ``losses`` attributes directly, or a
+    ``wdl()`` method returning a tuple ``(wins, draws, losses)``. If possible,
+    the statistics are converted to White's point of view via ``wdl.pov(chess.WHITE)``.
+
+    The expected score is calculated using the formula:
+
+        (wins + 0.5 * draws) / total
+
+    where ``total = wins + draws + losses``. If the input is ``None``, if the
+    necessary statistics cannot be obtained, or if ``total <= 0``, the function
+    returns ``None``.
+
+    Returns:
+        float | None: A value between 0.0 and 1.0 representing the expected
+        score for White, or ``None`` if it cannot be computed.
+    """
     if wdl is None:
         return None
     try:
