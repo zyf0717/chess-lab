@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 
 import chess
 import chess.svg
@@ -76,6 +77,7 @@ def server(input, output, session):
     analysis_id = 0
     last_analysis_key: tuple[str, int, float] | None = None
     engine_move_val = reactive.Value(None)
+    eval_trigger_time = reactive.Value(0.0)  # Track when to trigger eval
     annotation_queue: queue.Queue[
         tuple[int, dict[int, str], dict[str, dict[str, int]], list[int]]
     ] = queue.Queue()
@@ -174,6 +176,21 @@ def server(input, output, session):
     @reactive.event(input.last_move)
     def _last_move():
         ply_val.set(len(moves_val()))
+
+    @reactive.Effect
+    @reactive.event(input.move_back_2)
+    def _move_back_2():
+        ply = ply_val()
+        new_ply = max(0, ply - 2)
+        ply_val.set(new_ply)
+
+    @reactive.Effect
+    @reactive.event(input.move_forward_2)
+    def _move_forward_2():
+        ply = ply_val()
+        moves = moves_val()
+        new_ply = min(len(moves), ply + 2)
+        ply_val.set(new_ply)
 
     def _board_at_ply(ply: int) -> chess.Board:
         """Get board at specific ply."""
@@ -303,13 +320,37 @@ def server(input, output, session):
         _ = input.multipv()
         _ = input.engine_threads()
         _ = input.think_time()
-        board = _current_board()
-        ply = ply_val()
-        prev_fen = None
-        if ply > 0:
-            prev_fen = _board_at_ply(ply - 1).fen()
-        mover_is_white = (ply % 2) == 1
-        _start_streaming_eval(board, prev_fen, mover_is_white)
+
+        # Clear engine move and analysis state immediately to prevent stale UI
+        engine_move_val.set(None)
+        analysis_done.set(False)
+
+        # Set trigger time to 0.2 seconds from now
+        eval_trigger_time.set(time.time() + 0.2)
+
+    @reactive.Effect
+    def _debounced_eval():
+        """Actually trigger eval after debounce delay."""
+        if not analysis_ready():
+            return
+
+        # Check every 0.05 seconds if it's time to trigger
+        reactive.invalidate_later(0.05)
+
+        trigger_time = eval_trigger_time()
+        if trigger_time == 0.0:
+            return
+
+        # If we've reached the trigger time, start the evaluation
+        if time.time() >= trigger_time:
+            eval_trigger_time.set(0.0)  # Reset trigger time
+            board = _current_board()
+            ply = ply_val()
+            prev_fen = None
+            if ply > 0:
+                prev_fen = _board_at_ply(ply - 1).fen()
+            mover_is_white = (ply % 2) == 1
+            _start_streaming_eval(board, prev_fen, mover_is_white)
 
     @reactive.Effect
     def _drain_eval_queue():

@@ -178,6 +178,18 @@ CUSTOM_JS = """
                     nextButton.click();
                     nextButton.blur();
                 }
+            } else if (event.key === "ArrowUp") {
+                event.preventDefault();
+                // Send custom input to go back 2 plys
+                if (window.Shiny && Shiny.setInputValue) {
+                    Shiny.setInputValue("move_back_2", Math.random(), { priority: "event" });
+                }
+            } else if (event.key === "ArrowDown") {
+                event.preventDefault();
+                // Send custom input to go forward 2 plys
+                if (window.Shiny && Shiny.setInputValue) {
+                    Shiny.setInputValue("move_forward_2", Math.random(), { priority: "event" });
+                }
             }
         });
 """
