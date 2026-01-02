@@ -30,7 +30,7 @@ from utils import (
     reset_game_state,
 )
 
-BOARD_SIZE = 360
+BOARD_SIZE = 480
 
 
 def server(input, output, session):

@@ -75,6 +75,21 @@ app_ui = ui.page_fluid(
         .bslib-dark .move-table td[data-ply]:hover {
             background-color: rgba(13, 110, 253, 0.2);
         }
+
+        /* Make main navigation buttons (< and >) twice as wide as << and >> */
+        .board-nav-buttons {
+            display: flex;
+            gap: 0.5rem;
+            justify-content: center;
+            margin-top: 0.5rem;
+        }
+        .board-nav-buttons button {
+            flex-grow: 1;
+            flex-basis: 0;
+        }
+        #prev_move, #next_move {
+            flex-grow: 2;
+        }
         """
     ),
     ui.tags.script(
@@ -123,6 +138,30 @@ app_ui = ui.page_fluid(
 
         document.addEventListener("DOMContentLoaded", observeMoveTable);
         document.addEventListener("shiny:connected", observeMoveTable);
+
+        // Handle keyboard arrow keys for move navigation
+        document.addEventListener("keydown", (event) => {
+            // Only handle if not typing in an input field
+            if (event.target.tagName === "INPUT" || event.target.tagName === "TEXTAREA") {
+                return;
+            }
+
+            if (event.key === "ArrowLeft") {
+                event.preventDefault();
+                const prevButton = document.getElementById("prev_move");
+                if (prevButton) {
+                    prevButton.click();
+                    prevButton.blur();
+                }
+            } else if (event.key === "ArrowRight") {
+                event.preventDefault();
+                const nextButton = document.getElementById("next_move");
+                if (nextButton) {
+                    nextButton.click();
+                    nextButton.blur();
+                }
+            }
+        });
         """
     ),
     ui.navset_bar(
@@ -182,7 +221,7 @@ app_ui = ui.page_fluid(
                                 ui.input_action_button("prev_move", "<"),
                                 ui.input_action_button("next_move", ">"),
                                 ui.input_action_button("last_move", ">>"),
-                                class_="d-flex justify-content-center gap-2 mt-2",
+                                class_="board-nav-buttons",
                             ),
                             ui.output_ui("fen_line"),
                         ),
