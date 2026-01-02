@@ -233,10 +233,10 @@ app_ui = ui.page_navbar(
                     "annotation_metric",
                     "Annotation metric",
                     choices={
-                        "cpl": "Centipawn loss (CPL)",
-                        "wdl": "Stockfish WDL%",
+                        "cpl": "Centipawn loss",
+                        "wdl": "Expected score (from WDL)",
                     },
-                    selected="cpl",
+                    selected="wdl",
                 ),
                 ui.input_action_button("annotate_moves", "Annotate Game"),
                 ui.hr(),

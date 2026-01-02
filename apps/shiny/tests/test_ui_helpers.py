@@ -24,4 +24,43 @@ def test_format_eval_line_uses_annotation():
         {1: "?! (120)"},
         lambda value: "??",
     )
-    assert line == "Move: 1. e4 ?! (120)"
+    assert line == "1. e4 | ?! | Eval: -- | CPL: 120 | ES: --"
+
+
+def test_format_eval_line_with_pv():
+    # Test with PV lines that include eval
+    line = format_eval_line(
+        "CPL: 50",
+        2,
+        ["e4", "e5"],
+        {},
+        lambda value: "",
+        pv_lines=["-0.10 — Nf3 Nc6 Bb5", "+0.25 — d4 exd4 Qxd4"],
+        wdl_score=0.48,
+    )
+    assert line == "1... e5 | OK | Eval: -0.10 | CPL: 50 | ES: 0.48"
+
+
+def test_format_eval_line_checkmate_annotation():
+    line = format_eval_line(
+        "CPL: --",
+        4,
+        ["f3", "e5", "g4", "Qh4#"],
+        {4: "OK"},
+        lambda value: "??",
+    )
+    assert line == "2... Qh4# | OK | Eval: -- | CPL: -- | ES: --"
+
+
+def test_format_eval_line_with_mate_score():
+    # Test with mate score in PV
+    line = format_eval_line(
+        "CPL: --",
+        2,
+        ["f3", "e5"],
+        {},
+        lambda value: "",
+        pv_lines=["Mate in 2 — Qh4# Kf1"],
+        wdl_score=1.0,
+    )
+    assert line == "1... e5 | OK | Eval: Mate in 2 | CPL: -- | ES: 1.00"

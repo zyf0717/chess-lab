@@ -152,6 +152,13 @@ def annotate_game_worker(
         display_annotations: dict[int, str] = {}
         cpl_by_ply: dict[int, int] = {}
 
+        # Generate SAN notation to check for checkmate
+        board_copy = chess.Board(base_fen)
+        sans = []
+        for move in move_list:
+            sans.append(board_copy.san(move))
+            board_copy.push(move)
+
         for ply in range(1, len(evals)):
             prev_cp = clamp_score(evals[ply - 1])
             curr_cp = clamp_score(evals[ply])
@@ -160,16 +167,28 @@ def annotate_game_worker(
             delta_for_mover = delta if mover_is_white else -delta
             cpl_cp = max(0, -int(delta_for_mover))
             cpl_by_ply[ply] = cpl_cp
-            if include_wdl and wdl_scores:
+
+            # Check if move is checkmate
+            is_checkmate = sans[ply - 1].endswith("#")
+
+            if is_checkmate:
+                # Checkmate is always marked as OK - don't add any annotation
+                # (no entry in label_annotations means it's counted as "OK")
+                pass
+            elif include_wdl and wdl_scores:
                 prev_wdl = wdl_scores[ply - 1]
                 curr_wdl = wdl_scores[ply]
-                wdl_delta = curr_wdl - prev_wdl
-                wdl_delta_for_mover = wdl_delta if mover_is_white else -wdl_delta
-                label = classify_wdl_delta(wdl_delta_for_mover)
-                if label:
-                    loss = max(0.0, -wdl_delta_for_mover)
-                    display_annotations[ply] = f"{label} ({loss:.1%})"
-                    label_annotations[ply] = label
+                # Skip WDL-based annotation if either score is None
+                if prev_wdl is not None and curr_wdl is not None:
+                    wdl_delta = curr_wdl - prev_wdl
+                    wdl_delta_for_mover = wdl_delta if mover_is_white else -wdl_delta
+                    label = classify_wdl_delta(wdl_delta_for_mover)
+                    if label:
+                        # Show as negative to indicate loss for the mover
+                        display_annotations[ply] = (
+                            f"{label} ({wdl_delta_for_mover:.2f})"
+                        )
+                        label_annotations[ply] = label
             else:
                 label = classify_delta(delta_for_mover)
                 if label:
@@ -178,9 +197,17 @@ def annotate_game_worker(
 
         summary = summarize_annotations(label_annotations, cpl_by_ply, len(move_list))
         summary["meta"] = {"duration_sec": time.monotonic() - start_time}
-        out_queue.put((current_id, display_annotations, summary, evals))
+        out_queue.put(
+            (
+                current_id,
+                display_annotations,
+                summary,
+                evals,
+                wdl_scores if include_wdl else [],
+            )
+        )
     except Exception:
-        out_queue.put((current_id, {}, {}, []))
+        out_queue.put((current_id, {}, {}, [], []))
 
 
 def stream_analysis_worker(
@@ -211,7 +238,7 @@ def stream_analysis_worker(
         board_obj = chess.Board(fen_str)
         prev_board = chess.Board(prev_fen_str) if prev_fen_str else None
 
-        for delta_cp, lines, best_move, prev_pv, done in stream_analysis(
+        for delta_cp, lines, best_move, prev_pv, wdl_score, done in stream_analysis(
             board_obj,
             time_limit=think_time,
             multipv=multipv,
@@ -223,12 +250,16 @@ def stream_analysis_worker(
                 break
 
             if delta_cp is None:
-                out_queue.put((current_id, None, lines, best_move, prev_pv, done))
+                out_queue.put(
+                    (current_id, None, lines, best_move, prev_pv, wdl_score, done)
+                )
                 continue
 
             # Convert white-POV delta to mover CPL for display
             delta_for_mover = delta_cp if mover_is_white else -delta_cp
             cpl = max(0, -delta_for_mover)
-            out_queue.put((current_id, cpl, lines, best_move, prev_pv, done))
+            out_queue.put((current_id, cpl, lines, best_move, prev_pv, wdl_score, done))
     except Exception as exc:
-        out_queue.put((current_id, f"Engine unavailable: {exc}", [], None, None, True))
+        out_queue.put(
+            (current_id, f"Engine unavailable: {exc}", [], None, None, None, True)
+        )
