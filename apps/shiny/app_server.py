@@ -204,6 +204,9 @@ def server(input, output, session):
         summary_val.set({})
         annotation_status.set("running")
 
+        # Update button to show it's running
+        ui.update_action_button("annotate_moves", label="Annotating...", disabled=True)
+
         annotation_thread = threading.Thread(
             target=annotate_game_worker,
             args=(
@@ -218,6 +221,19 @@ def server(input, output, session):
             daemon=True,
         )
         annotation_thread.start()
+
+    @reactive.Effect
+    def _update_annotate_button_state():
+        """Update button state based on annotation status."""
+        status = annotation_status()
+        if status == "running":
+            ui.update_action_button(
+                "annotate_moves", label="Annotating...", disabled=True
+            )
+        else:
+            ui.update_action_button(
+                "annotate_moves", label="Annotate Game", disabled=False
+            )
 
     def _current_board() -> chess.Board:
         return _board_at_ply(ply_val())
