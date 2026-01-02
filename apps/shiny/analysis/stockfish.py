@@ -415,9 +415,7 @@ def evaluate_positions(
                     break
                 board_obj = chess.Board(fen)
                 info = engine.analyse(board_obj, limit)
-                wdl_score = (
-                    (wdl_expected_score(info.get("wdl")) if include_wdl else None)
-                )
+                wdl_score = wdl_expected_score(info.get("wdl")) if include_wdl else None
                 results.append((idx, score_to_cp(info["score"].pov(chess.WHITE)), wdl_score))
             return results
         finally:
