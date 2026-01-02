@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from analysis.analysis_engine import classify_wdl_delta
 from shiny import ui
 
 
@@ -86,6 +87,7 @@ def render_summary_table(
     summary: dict,
     status: str,
     calculate_elo_func,
+    annotation_metric: str = "cpl",
 ) -> ui.Tag:
     """Render move annotation summary table.
 
@@ -93,6 +95,7 @@ def render_summary_table(
         summary: Summary dictionary with player statistics
         status: Annotation status ("running", "idle", etc.)
         calculate_elo_func: Function to calculate Elo from CPL
+        annotation_metric: Annotation metric ("cpl" or "wdl")
 
     Returns:
         Shiny UI element
@@ -102,7 +105,11 @@ def render_summary_table(
     if not summary:
         return ui.p("No annotations yet.", class_="text-muted")
 
-    order = ["??", "?", "?!", "OK"]
+    # Choose column order based on annotation metric
+    if annotation_metric == "wdl":
+        order = ["Best", "Excellent", "Good", "?!", "?", "??"]
+    else:
+        order = ["??", "?", "?!", "OK"]
     white_counts = summary.get("White", {})
     black_counts = summary.get("Black", {})
     white_avg = float(white_counts.get("avg_cpl", 0.0))
@@ -262,6 +269,9 @@ def format_eval_line(
     classify_func,
     pv_lines: list[str] | None = None,
     wdl_score: float | None = None,
+    annotation_metric: str = "cpl",
+    wdl_scores: list[float] | None = None,
+    prev_wdl_score: float | None = None,
 ) -> str:
     """Format evaluation line with move and annotation.
 
@@ -269,10 +279,13 @@ def format_eval_line(
         eval_message: Evaluation message or centipawn value
         ply: Current ply number
         sans: List of moves in SAN notation
-        annotations: Map of ply to annotation
-        classify_func: Function to classify centipawn delta
-        pv_lines: Optional list of PV lines from engine analysis
-        wdl_score: Optional WDL expected score from engine
+        annotations: Dictionary mapping ply to annotation
+        classify_func: Function to classify centipawn loss
+        pv_lines: Principal variation lines
+        wdl_score: Current position's WDL expected score
+        annotation_metric: Metric for annotations ("cpl" or "expected_score")
+        wdl_scores: All WDL scores from annotate game (for fallback)
+        prev_wdl_score: Previous position's WDL expected score from live analysis
 
     Returns:
         Formatted evaluation string
@@ -302,15 +315,38 @@ def format_eval_line(
         move_prefix = f"{move_no}. " if (ply % 2) == 1 else f"{move_no}... "
         move_text = sans[ply - 1]
 
-        # Get annotation
-        annotation_text = annotations.get(ply, "")
-        if annotation_text:
-            annotation = annotation_text.split()[0]
-        elif cpl_value is not None:
-            label = classify_func(-cpl_value)
-            annotation = label if label else "OK"
+        # Get annotation - always calculate on-the-fly from engine data
+        if annotation_metric == "cpl":
+            # For CPL metric: use error labels or "OK"
+            if cpl_value is not None:
+                label = classify_func(-cpl_value)
+                annotation = label if label else "OK"
+            else:
+                annotation = "OK"
         else:
-            annotation = "OK"
+            # For WDL metric: calculate quality label from WDL scores
+            # Prefer live analysis scores (wdl_score + prev_wdl_score)
+            if wdl_score is not None and prev_wdl_score is not None and ply > 0:
+                # Use live analysis WDL scores
+                wdl_delta = wdl_score - prev_wdl_score
+                # Adjust for mover perspective
+                mover_is_white = (ply % 2) == 1
+                wdl_delta_for_mover = wdl_delta if mover_is_white else -wdl_delta
+                annotation = classify_wdl_delta(wdl_delta_for_mover)
+            elif wdl_scores and len(wdl_scores) > ply and ply > 0:
+                # Fallback to annotate game WDL scores
+                curr_wdl = wdl_scores[ply]
+                prev_wdl = wdl_scores[ply - 1]
+                if curr_wdl is not None and prev_wdl is not None:
+                    wdl_delta = curr_wdl - prev_wdl
+                    # Adjust for mover perspective
+                    mover_is_white = (ply % 2) == 1
+                    wdl_delta_for_mover = wdl_delta if mover_is_white else -wdl_delta
+                    annotation = classify_wdl_delta(wdl_delta_for_mover)
+                else:
+                    annotation = "--"
+            else:
+                annotation = "--"
 
         # Parse eval from top PV line (format: "+0.25 — e4 e5 Nf3" or "Mate in 3 — ...")
         if pv_lines and len(pv_lines) > 0:

@@ -249,7 +249,7 @@ def stream_analysis(
     stop_event=None,
     best_move_board: chess.Board | None = None,
 ):
-    """Yield (delta_cp_white, pv_lines, best_move_uci, prev_pv_lines, wdl_score, done)."""
+    """Yield (delta_cp_white, pv_lines, best_move_uci, prev_pv_lines, wdl_score, prev_wdl_score, done)."""
     path = ensure_stockfish_binary()
     engine = chess.engine.SimpleEngine.popen_uci(str(path))
     try:
@@ -273,12 +273,14 @@ def stream_analysis(
         best_move_uci = None
         prev_cp = None
         prev_lines = None
+        prev_wdl: float | None = None
         if best_move_board is not None:
             try:
                 if multipv <= 1:
                     prev_info = engine.analyse(best_move_board, limit)
                     prev_score = prev_info["score"].pov(chess.WHITE)
                     prev_cp = clamp_score(score_to_cp(prev_score))
+                    prev_wdl = wdl_expected_score(prev_info.get("wdl"))
                     prev_pv = prev_info.get("pv")
                     if prev_pv:
                         prev_lines = [
@@ -288,29 +290,35 @@ def stream_analysis(
                         best_move_uci = prev_pv[0].uci()
                 else:
                     prev_infos = engine.analyse(best_move_board, limit, multipv=multipv)
-                    latest_prev: list[tuple[int, str, int, str | None]] = []
+                    latest_prev: list[
+                        tuple[int, str, int, str | None, float | None]
+                    ] = []
                     for info in prev_infos:
                         score = info["score"].pov(chess.WHITE)
                         line_score = format_score(score)
                         line_pv = format_pv(best_move_board, info["pv"])
                         rank = int(info.get("multipv", 1))
                         first_move = info["pv"][0].uci() if info.get("pv") else None
+                        wdl = wdl_expected_score(info.get("wdl")) if rank == 1 else None
                         latest_prev.append(
                             (
                                 rank,
                                 f"{line_score} — {line_pv}",
                                 clamp_score(score_to_cp(score)),
                                 first_move,
+                                wdl,
                             )
                         )
                     latest_prev.sort(key=lambda item: item[0])
                     if latest_prev:
-                        prev_lines = [line for _, line, _, _ in latest_prev]
+                        prev_lines = [line for _, line, _, _, _ in latest_prev]
                         prev_cp = latest_prev[0][2]
                         best_move_uci = latest_prev[0][3]
+                        prev_wdl = latest_prev[0][4]
             except Exception:
                 prev_cp = None
                 prev_lines = None
+                prev_wdl = None
 
         start = time.monotonic()
         with engine.analysis(board, limit, multipv=multipv) as analysis:
@@ -348,14 +356,14 @@ def stream_analysis(
                     # Get the best move from the current position (rank 1)
                     if 1 in latest:
                         latest_best = latest[1][2]
-                    yield latest_delta, latest_lines, latest_best, prev_lines, latest_wdl, False
+                    yield latest_delta, latest_lines, latest_best, prev_lines, latest_wdl, prev_wdl, False
                 if time.monotonic() - start >= time_limit:
                     break
         if stop_event is not None and stop_event.is_set():
             return
         if latest_lines is None:
             latest_lines = []
-        yield latest_delta, latest_lines, latest_best, prev_lines, latest_wdl, True
+        yield latest_delta, latest_lines, latest_best, prev_lines, latest_wdl, prev_wdl, True
     finally:
         engine.quit()
 

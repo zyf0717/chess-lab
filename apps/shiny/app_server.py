@@ -53,9 +53,11 @@ def server(input, output, session):
     pv_val = reactive.Value([])
     prev_pv_val = reactive.Value([])
     wdl_val = reactive.Value(None)
+    prev_wdl_val = reactive.Value(None)
     analysis_done = reactive.Value(False)
     analysis_ready = reactive.Value(False)
-    annotations_val = reactive.Value({})
+    annotations_val = reactive.Value({})  # Display annotations for moves table
+    label_annotations_val = reactive.Value({})  # All annotations for per-move analysis
     summary_val = reactive.Value({})
     annotation_status = reactive.Value("idle")
     evals_val = reactive.Value([])
@@ -121,6 +123,7 @@ def server(input, output, session):
             "eval": eval_val,
             "pv": pv_val,
             "annotations": annotations_val,
+            "label_annotations": label_annotations_val,
             "summary": summary_val,
             "annotation_status": annotation_status,
             "evals": evals_val,
@@ -144,6 +147,7 @@ def server(input, output, session):
         ply_val.set(0)
         analysis_ready.set(True)
         annotations_val.set({})
+        label_annotations_val.set({})
         summary_val.set({})
         annotation_status.set("idle")
         engine_move_val.set(None)
@@ -299,7 +303,16 @@ def server(input, output, session):
             analysis_stop.set()
         analysis_stop = threading.Event()
         local_queue: queue.Queue[
-            tuple[int, int | str | None, list[str], str | None, list[str] | None, bool]
+            tuple[
+                int,
+                int | str | None,
+                list[str],
+                str | None,
+                list[str] | None,
+                float | None,
+                float | None,
+                bool,
+            ]
         ] = queue.Queue()
         analysis_queue = local_queue
 
@@ -307,6 +320,7 @@ def server(input, output, session):
         pv_val.set([])
         prev_pv_val.set([])
         wdl_val.set(None)
+        prev_wdl_val.set(None)
         analysis_done.set(False)
         engine_move_val.set(None)
 
@@ -378,12 +392,20 @@ def server(input, output, session):
         latest_move = None
         latest_prev_pv = None
         latest_wdl = None
+        latest_prev_wdl = None
         analysis_complete = False
         while True:
             try:
-                message_id, message, lines, best_move, prev_pv, wdl_score, done = (
-                    analysis_queue.get_nowait()
-                )
+                (
+                    message_id,
+                    message,
+                    lines,
+                    best_move,
+                    prev_pv,
+                    wdl_score,
+                    prev_wdl_score,
+                    done,
+                ) = analysis_queue.get_nowait()
             except queue.Empty:
                 break
             if message_id == analysis_id:
@@ -393,6 +415,7 @@ def server(input, output, session):
                 latest_move = best_move
                 latest_prev_pv = prev_pv
                 latest_wdl = wdl_score
+                latest_prev_wdl = prev_wdl_score
                 analysis_complete = analysis_complete or done
         if latest_set:
             if isinstance(latest, str) and latest.startswith("Engine unavailable"):
@@ -409,6 +432,8 @@ def server(input, output, session):
             engine_move_val.set(latest_move)
         if latest_wdl is not None:
             wdl_val.set(latest_wdl)
+        if latest_prev_wdl is not None:
+            prev_wdl_val.set(latest_prev_wdl)
         if analysis_complete:
             analysis_done.set(True)
 
@@ -417,23 +442,32 @@ def server(input, output, session):
         nonlocal annotation_queue, annotation_id
         reactive.invalidate_later(0.4)
         latest_annotations = None
+        latest_label_annotations = None
         latest_summary = None
         latest_evals = None
         latest_wdl_scores = None
         while True:
             try:
-                message_id, annotations, summary, evals, wdl_scores = (
-                    annotation_queue.get_nowait()
-                )
+                (
+                    message_id,
+                    annotations,
+                    label_annotations,
+                    summary,
+                    evals,
+                    wdl_scores,
+                ) = annotation_queue.get_nowait()
             except queue.Empty:
                 break
             if message_id == annotation_id:
                 latest_annotations = annotations
+                latest_label_annotations = label_annotations
                 latest_summary = summary
                 latest_evals = evals
                 latest_wdl_scores = wdl_scores
         if latest_annotations is not None:
             annotations_val.set(latest_annotations)
+        if latest_label_annotations is not None:
+            label_annotations_val.set(latest_label_annotations)
         if latest_summary is not None:
             summary_val.set(latest_summary)
             evals_val.set(latest_evals if latest_evals else [])
@@ -530,10 +564,13 @@ def server(input, output, session):
             eval_val(),
             ply_val(),
             sans_val(),
-            annotations_val(),
+            label_annotations_val(),  # Use label_annotations for full quality labels
             classify_delta,
             pv_val(),
             wdl_val(),
+            input.annotation_metric() or "cpl",
+            wdl_scores_val(),  # Pass all WDL scores for calculating deltas
+            prev_wdl_val(),  # Pass previous WDL from live analysis
         )
 
     @render.ui
@@ -596,6 +633,7 @@ def server(input, output, session):
             summary_val(),
             annotation_status(),
             calculate_estimated_elo,
+            input.annotation_metric() or "cpl",
         )
 
     @render.ui

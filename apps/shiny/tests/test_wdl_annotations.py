@@ -38,10 +38,20 @@ def test_wdl_expected_score_from_method():
 
 
 def test_classify_wdl_delta_thresholds():
-    assert classify_wdl_delta(0.01) == ""
-    assert classify_wdl_delta(-0.049) == ""
+    # Best move (no loss)
+    assert classify_wdl_delta(0.01) == "Best"
+    assert classify_wdl_delta(0.00) == "Best"
+    # Excellent move (minimal loss)
+    assert classify_wdl_delta(-0.01) == "Excellent"
+    assert classify_wdl_delta(-0.019) == "Excellent"
+    # Good move (small loss)
+    assert classify_wdl_delta(-0.02) == "Good"
+    assert classify_wdl_delta(-0.049) == "Good"
+    # Inaccuracy
     assert classify_wdl_delta(-0.05) == "?!"
+    # Mistake
     assert classify_wdl_delta(-0.10) == "?"
+    # Blunder
     assert classify_wdl_delta(-0.20) == "??"
 
 
@@ -72,18 +82,26 @@ def test_checkmate_annotated_as_ok():
             annotation_metric="cpl",
         )
 
-        # Get results - now returns 5 elements: id, annotations, summary, evals, wdl_scores
+        # Get results - now returns 6 elements: id, display_annotations, label_annotations, summary, evals, wdl_scores
         result = result_queue.get(timeout=10)
-        _, display_annotations, summary, _, _ = result
+        _, display_annotations, label_annotations, summary, _, _ = result
 
         # Check that the checkmate move (ply 4) is NOT annotated with an error
-        # (checkmate should have no annotation, which means it's OK)
+        # (checkmate should have no annotation, which means it's not marked as an error)
         assert (
             4 not in display_annotations
         ), f"Checkmate should not have an annotation, but got: {display_annotations.get(4)}"
 
-        # Verify it's counted as OK in the summary
+        # Verify Black has no errors (checkmate move is not counted as a mistake)
         black_counts = summary.get("Black", {})
-        assert "OK" in black_counts, f"Summary missing OK count: {summary}"
+        assert (
+            black_counts.get("??", 0) == 0
+        ), f"Black should have no blunders: {summary}"
+        assert (
+            black_counts.get("?", 0) == 0
+        ), f"Black should have no mistakes: {summary}"
+        assert (
+            black_counts.get("?!", 0) == 0
+        ), f"Black should have no inaccuracies: {summary}"
     except Exception as e:
         pytest.fail(f"Test failed with exception: {e}")

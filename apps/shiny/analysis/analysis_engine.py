@@ -18,7 +18,8 @@ def classify_delta(delta_cp: int) -> str:
         delta_cp: Change in evaluation (mover perspective)
 
     Returns:
-        Annotation symbol ("??", "?", "?!", or "")
+        Error annotation symbol: \"??\" (≥300 CPL), \"?\" (≥150 CPL),
+        \"?!\" (≥70 CPL), or \"\" (no error, <70 CPL)
     """
     cpl = max(0, -delta_cp)
     if cpl >= 300:
@@ -37,7 +38,9 @@ def classify_wdl_delta(delta_score: float) -> str:
         delta_score: Change in expected score (mover perspective)
 
     Returns:
-        Annotation symbol ("??", "?", "?!", or "")
+        Quality label: "Best" (no loss), "Excellent" (0.00-0.02 loss),
+        "Good" (0.02-0.05 loss), "?!" (0.05-0.10 loss), "?" (0.10-0.20 loss),
+        or "??" (≥0.20 loss)
     """
     loss = max(0.0, -delta_score)
     if loss >= 0.20:
@@ -46,7 +49,11 @@ def classify_wdl_delta(delta_score: float) -> str:
         return "?"
     if loss >= 0.05:
         return "?!"
-    return ""
+    if loss >= 0.02:
+        return "Good"
+    if loss > 0.00:
+        return "Excellent"
+    return "Best"
 
 
 def summarize_annotations(
@@ -57,19 +64,22 @@ def summarize_annotations(
     """Generate summary statistics from move annotations.
 
     Args:
-        annotations: Map of ply to annotation label
+        annotations: Map of ply to annotation label ("??", "?", "?!", "Good",
+                     "Excellent", "Best", or empty for unmarked moves)
         cpl_by_ply: Map of ply to centipawn loss
         total_plies: Total number of plies in game
 
     Returns:
-        Dictionary with statistics for White and Black
+        Dictionary with statistics for White and Black, including counts for
+        all quality categories: "Best", "Excellent", "Good", "?!", "?", "??"
+        Also includes "OK" count (sum of Best + Excellent + Good + unmarked)
     """
-    labels = ["??", "?", "?!"]
+    all_labels = ["Best", "Excellent", "Good", "?!", "?", "??"]
+    error_labels = ["??", "?", "?!"]
     counts = {
-        "White": {label: 0 for label in labels},
-        "Black": {label: 0 for label in labels},
+        "White": {label: 0 for label in all_labels},
+        "Black": {label: 0 for label in all_labels},
     }
-    neutral = {"White": 0, "Black": 0}
     totals = {"White": 0, "Black": 0}
     moves = {"White": 0, "Black": 0}
 
@@ -78,13 +88,16 @@ def summarize_annotations(
         moves[side] += 1
         totals[side] += cpl_by_ply.get(ply, 0)
         label = annotations.get(ply, "")
-        if label:
+        if label in all_labels:
             counts[side][label] += 1
-        else:
-            neutral[side] += 1
+        # Note: unmarked moves (empty label) are not counted in any category
 
-    counts["White"]["OK"] = neutral["White"]
-    counts["Black"]["OK"] = neutral["Black"]
+    # Calculate OK count (for CPL metric: all non-error moves)
+    for side in ["White", "Black"]:
+        ok_count = moves[side]
+        for error_label in error_labels:
+            ok_count -= counts[side][error_label]
+        counts[side]["OK"] = ok_count
     counts["White"]["avg_cpl"] = (
         totals["White"] / moves["White"] if moves["White"] else 0.0
     )
@@ -184,14 +197,17 @@ def annotate_game_worker(
                     wdl_delta_for_mover = wdl_delta if mover_is_white else -wdl_delta
                     label = classify_wdl_delta(wdl_delta_for_mover)
                     if label:
-                        # Show as negative to indicate loss for the mover
-                        display_annotations[ply] = (
-                            f"{label} ({wdl_delta_for_mover:.2f})"
-                        )
+                        # Track all labels for summary statistics
                         label_annotations[ply] = label
+                        # Only display errors (not Best/Excellent/Good) in moves table
+                        if label in ["??", "?", "?!"]:
+                            display_annotations[ply] = (
+                                f"{label} ({wdl_delta_for_mover:.2f})"
+                            )
             else:
                 label = classify_delta(delta_for_mover)
                 if label:
+                    # For CPL-based annotation, only errors are labeled anyway
                     display_annotations[ply] = f"{label} ({cpl_cp})"
                     label_annotations[ply] = label
 
@@ -201,13 +217,14 @@ def annotate_game_worker(
             (
                 current_id,
                 display_annotations,
+                label_annotations,  # Add label_annotations for per-move display
                 summary,
                 evals,
                 wdl_scores if include_wdl else [],
             )
         )
     except Exception:
-        out_queue.put((current_id, {}, {}, [], []))
+        out_queue.put((current_id, {}, {}, {}, [], []))
 
 
 def stream_analysis_worker(
@@ -238,7 +255,15 @@ def stream_analysis_worker(
         board_obj = chess.Board(fen_str)
         prev_board = chess.Board(prev_fen_str) if prev_fen_str else None
 
-        for delta_cp, lines, best_move, prev_pv, wdl_score, done in stream_analysis(
+        for (
+            delta_cp,
+            lines,
+            best_move,
+            prev_pv,
+            wdl_score,
+            prev_wdl_score,
+            done,
+        ) in stream_analysis(
             board_obj,
             time_limit=think_time,
             multipv=multipv,
@@ -251,15 +276,35 @@ def stream_analysis_worker(
 
             if delta_cp is None:
                 out_queue.put(
-                    (current_id, None, lines, best_move, prev_pv, wdl_score, done)
+                    (
+                        current_id,
+                        None,
+                        lines,
+                        best_move,
+                        prev_pv,
+                        wdl_score,
+                        prev_wdl_score,
+                        done,
+                    )
                 )
                 continue
 
             # Convert white-POV delta to mover CPL for display
             delta_for_mover = delta_cp if mover_is_white else -delta_cp
             cpl = max(0, -delta_for_mover)
-            out_queue.put((current_id, cpl, lines, best_move, prev_pv, wdl_score, done))
+            out_queue.put(
+                (
+                    current_id,
+                    cpl,
+                    lines,
+                    best_move,
+                    prev_pv,
+                    wdl_score,
+                    prev_wdl_score,
+                    done,
+                )
+            )
     except Exception as exc:
         out_queue.put(
-            (current_id, f"Engine unavailable: {exc}", [], None, None, None, True)
+            (current_id, f"Engine unavailable: {exc}", [], None, None, None, None, True)
         )
