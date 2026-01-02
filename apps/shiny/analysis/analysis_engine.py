@@ -30,6 +30,25 @@ def classify_delta(delta_cp: int) -> str:
     return ""
 
 
+def classify_wdl_delta(delta_score: float) -> str:
+    """Classify move quality based on expected score drop.
+
+    Args:
+        delta_score: Change in expected score (mover perspective)
+
+    Returns:
+        Annotation symbol ("??", "?", "?!", or "")
+    """
+    loss = max(0.0, -delta_score)
+    if loss >= 0.20:
+        return "??"
+    if loss >= 0.10:
+        return "?"
+    if loss >= 0.05:
+        return "?!"
+    return ""
+
+
 def summarize_annotations(
     annotations: dict[int, str],
     cpl_by_ply: dict[int, int],
@@ -95,6 +114,7 @@ def annotate_game_worker(
     current_id: int,
     time_limit: float,
     worker_count: int,
+    annotation_metric: str = "cpl",
 ):
     """Worker function to annotate all moves in a game.
 
@@ -110,13 +130,20 @@ def annotate_game_worker(
     try:
         start_time = time.monotonic()
         base_board = chess.Board(base_fen)
-        evals = evaluate_positions(
+        include_wdl = annotation_metric == "wdl"
+        eval_result = evaluate_positions(
             base_board,
             move_list,
             time_limit=time_limit,
             workers=worker_count,
             stop_event=stop_event,
+            include_wdl=include_wdl,
         )
+        if include_wdl:
+            evals, wdl_scores = eval_result
+        else:
+            evals = eval_result
+            wdl_scores = []
 
         if stop_event.is_set() or len(evals) <= 1:
             return
@@ -133,10 +160,21 @@ def annotate_game_worker(
             delta_for_mover = delta if mover_is_white else -delta
             cpl_cp = max(0, -int(delta_for_mover))
             cpl_by_ply[ply] = cpl_cp
-            label = classify_delta(delta_for_mover)
-            if label:
-                display_annotations[ply] = f"{label} ({cpl_cp})"
-                label_annotations[ply] = label
+            if include_wdl and wdl_scores:
+                prev_wdl = wdl_scores[ply - 1]
+                curr_wdl = wdl_scores[ply]
+                wdl_delta = curr_wdl - prev_wdl
+                wdl_delta_for_mover = wdl_delta if mover_is_white else -wdl_delta
+                label = classify_wdl_delta(wdl_delta_for_mover)
+                if label:
+                    loss = max(0.0, -wdl_delta_for_mover)
+                    display_annotations[ply] = f"{label} ({loss:.1%})"
+                    label_annotations[ply] = label
+            else:
+                label = classify_delta(delta_for_mover)
+                if label:
+                    display_annotations[ply] = f"{label} ({cpl_cp})"
+                    label_annotations[ply] = label
 
         summary = summarize_annotations(label_annotations, cpl_by_ply, len(move_list))
         summary["meta"] = {"duration_sec": time.monotonic() - start_time}

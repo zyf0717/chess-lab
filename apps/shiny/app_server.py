@@ -216,6 +216,7 @@ def server(input, output, session):
         params = get_input_params(input)
         think_time = params["think_time"]
         thread_count = params["threads"]
+        annotation_metric = input.annotation_metric() or "cpl"
 
         if annotation_stop is not None:
             annotation_stop.set()
@@ -242,6 +243,7 @@ def server(input, output, session):
                 current_id,
                 think_time,
                 thread_count,
+                annotation_metric,
             ),
             daemon=True,
         )
