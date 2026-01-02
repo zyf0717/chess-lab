@@ -136,23 +136,29 @@ app_ui = ui.page_fluid(
                         "Or paste PGN:",
                         rows=8,
                     ),
-                    ui.input_select(
-                        "multipv",
-                        "Engine lines",
-                        choices=[str(value) for value in range(1, 9)],
-                        selected="3",
-                    ),
-                    ui.input_select(
-                        "think_time",
-                        "Engine time (sec/move):",
-                        choices=["0.3", "1", "3", "10"],
-                        selected="1",
-                    ),
-                    ui.input_select(
-                        "engine_threads",
-                        "CPU threads:",
-                        choices=[str(value) for value in range(1, 9)],
-                        selected="8",
+                    ui.accordion(
+                        ui.accordion_panel(
+                            "Engine Settings",
+                            ui.input_select(
+                                "multipv",
+                                "Engine lines",
+                                choices=[str(value) for value in range(1, 9)],
+                                selected="3",
+                            ),
+                            ui.input_select(
+                                "think_time",
+                                "Engine time (sec/move):",
+                                choices=["0.3", "1", "3", "10"],
+                                selected="1",
+                            ),
+                            ui.input_select(
+                                "engine_threads",
+                                "CPU threads:",
+                                choices=[str(value) for value in range(1, 9)],
+                                selected="8",
+                            ),
+                        ),
+                        open=False,
                     ),
                     ui.input_action_button("annotate_moves", "Annotate Game"),
                     ui.hr(),

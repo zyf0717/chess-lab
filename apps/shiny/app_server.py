@@ -388,7 +388,7 @@ def server(input, output, session):
                     chess.svg.Arrow(
                         best_move.from_square,
                         best_move.to_square,
-                        color="#2f6f5e",
+                        color="green",
                     )
                 )
             except ValueError:
