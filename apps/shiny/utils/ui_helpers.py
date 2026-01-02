@@ -105,18 +105,25 @@ def render_summary_table(
     order = ["??", "?", "?!", "OK"]
     white_counts = summary.get("White", {})
     black_counts = summary.get("Black", {})
-    white_avg = float(white_counts.get("avg_cpl", 0.0))
-    black_avg = float(black_counts.get("avg_cpl", 0.0))
-    white_avg_cpl = round(white_avg)
-    black_avg_cpl = round(black_avg)
-    white_elo = calculate_elo_func(white_avg)
-    black_elo = calculate_elo_func(black_avg)
+    meta = summary.get("meta", {}) if isinstance(summary, dict) else {}
+    metric = meta.get("metric", "cpl")
+    white_avg = float(white_counts.get("avg_metric", 0.0))
+    black_avg = float(black_counts.get("avg_metric", 0.0))
+    show_elo = metric != "wdl"
+    avg_header = "Avg ΔWDL%" if metric == "wdl" else "Avg CPL"
+    if metric == "wdl":
+        white_avg_display = f"{white_avg * 100:.1f}%"
+        black_avg_display = f"{black_avg * 100:.1f}%"
+    else:
+        white_avg_display = str(round(white_avg))
+        black_avg_display = str(round(black_avg))
+    white_elo = calculate_elo_func(white_avg) if show_elo else None
+    black_elo = calculate_elo_func(black_avg) if show_elo else None
 
     note = (
         ui.p("Analyzing...", class_="text-muted mb-1") if status == "running" else None
     )
 
-    meta = summary.get("meta", {}) if isinstance(summary, dict) else {}
     duration = meta.get("duration_sec")
     footnote = (
         ui.tags.div(
@@ -127,29 +134,36 @@ def render_summary_table(
         else None
     )
 
+    header_cells = [
+        ui.tags.th("Player"),
+        *[ui.tags.th(label) for label in order],
+        ui.tags.th(avg_header),
+    ]
+    if show_elo:
+        header_cells.append(ui.tags.th("Est Elo"))
+
+    white_cells = [
+        ui.tags.td("White"),
+        *[ui.tags.td(str(white_counts.get(label, 0))) for label in order],
+        ui.tags.td(white_avg_display),
+    ]
+    if show_elo and white_elo is not None:
+        white_cells.append(ui.tags.td(f"{white_elo:.0f}"))
+
+    black_cells = [
+        ui.tags.td("Black"),
+        *[ui.tags.td(str(black_counts.get(label, 0))) for label in order],
+        ui.tags.td(black_avg_display),
+    ]
+    if show_elo and black_elo is not None:
+        black_cells.append(ui.tags.td(f"{black_elo:.0f}"))
+
     table = ui.tags.table(
         {"class": "table table-sm text-center mb-0"},
-        ui.tags.thead(
-            ui.tags.tr(
-                ui.tags.th("Player"),
-                *[ui.tags.th(label) for label in order],
-                ui.tags.th("Avg CPL"),
-                ui.tags.th("Est Elo"),
-            )
-        ),
+        ui.tags.thead(ui.tags.tr(*header_cells)),
         ui.tags.tbody(
-            ui.tags.tr(
-                ui.tags.td("White"),
-                *[ui.tags.td(str(white_counts.get(label, 0))) for label in order],
-                ui.tags.td(str(white_avg_cpl)),
-                ui.tags.td(f"{white_elo:.0f}"),
-            ),
-            ui.tags.tr(
-                ui.tags.td("Black"),
-                *[ui.tags.td(str(black_counts.get(label, 0))) for label in order],
-                ui.tags.td(str(black_avg_cpl)),
-                ui.tags.td(f"{black_elo:.0f}"),
-            ),
+            ui.tags.tr(*white_cells),
+            ui.tags.tr(*black_cells),
         ),
     )
 
