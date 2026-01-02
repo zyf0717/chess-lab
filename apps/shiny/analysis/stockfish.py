@@ -199,7 +199,7 @@ def wdl_expected_score(wdl) -> float | None:
     try:
         wdl = wdl.pov(chess.WHITE)
     except Exception:
-        wdl = wdl
+        pass
     wins = getattr(wdl, "wins", None)
     draws = getattr(wdl, "draws", None)
     losses = getattr(wdl, "losses", None)
