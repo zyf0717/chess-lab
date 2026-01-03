@@ -18,9 +18,12 @@ from shinywidgets import render_widget
 from utils import (
     DEFAULT_INFO,
     board_at_ply,
+    board_from_moves,
     create_eval_graph,
+    engine_best_move,
     extract_first_pv_move,
     extract_game_info,
+    format_engine_eval,
     format_eval_line,
     get_input_params,
     move_rows,
@@ -34,6 +37,7 @@ from utils import (
 )
 
 BOARD_SIZE = 480
+PLAY_ENGINE_TIME = 0.15
 
 # Greyscale color palette for chess board
 BOARD_COLORS = {
@@ -96,6 +100,12 @@ def server(input, output, session):
     annotation_thread: threading.Thread | None = None
     annotation_stop: threading.Event | None = None
     annotation_id = 0
+    play_moves_val = reactive.Value([])
+    play_sans_val = reactive.Value([])
+    play_ply_val = reactive.Value(0)
+    play_status_val = reactive.Value("White to move.")
+    play_eval_val = reactive.Value("Eval: --")
+    last_play_eval_fen: str | None = None
 
     state = {
         "game": game_val,
@@ -226,6 +236,26 @@ def server(input, output, session):
     def _move_forward_2():
         _set_ply(ply_val() + 2)
 
+    @reactive.Effect
+    @reactive.event(input.play_first_move)
+    def _play_first_move():
+        _set_play_ply(0)
+
+    @reactive.Effect
+    @reactive.event(input.play_prev_move)
+    def _play_prev_move():
+        _set_play_ply(play_ply_val() - 1)
+
+    @reactive.Effect
+    @reactive.event(input.play_next_move)
+    def _play_next_move():
+        _set_play_ply(play_ply_val() + 1)
+
+    @reactive.Effect
+    @reactive.event(input.play_last_move)
+    def _play_last_move():
+        _set_play_ply(len(play_moves_val()))
+
     def _board_at_ply(ply: int) -> chess.Board:
         """Get board at specific ply."""
         return board_at_ply(game_val(), moves_val(), ply)
@@ -307,6 +337,37 @@ def server(input, output, session):
 
     def _current_board() -> chess.Board:
         return _board_at_ply(ply_val())
+
+    def _play_board(ply: int | None = None) -> chess.Board:
+        return board_from_moves(
+            play_moves_val(), play_ply_val() if ply is None else ply
+        )
+
+    def _set_play_ply(ply: int) -> None:
+        total = len(play_moves_val())
+        play_ply_val.set(max(0, min(ply, total)))
+
+    def _apply_play_move(move: chess.Move) -> chess.Board | None:
+        ply = play_ply_val()
+        moves = play_moves_val()
+        sans = play_sans_val()
+        if ply != len(moves):
+            play_status_val.set("Navigate to the latest move to continue.")
+            return None
+
+        board = _play_board(ply)
+        if move not in board.legal_moves:
+            play_status_val.set("Illegal move.")
+            return None
+
+        san = board.san(move)
+        board.push(move)
+        moves = [*moves, move]
+        sans = [*sans, san]
+        play_moves_val.set(moves)
+        play_sans_val.set(sans)
+        play_ply_val.set(len(moves))
+        return board
 
     def _start_streaming_eval(
         board: chess.Board, prev_fen: str | None, mover_is_white: bool
@@ -488,6 +549,117 @@ def server(input, output, session):
             return
         _set_ply(ply)
 
+    @reactive.Effect
+    @reactive.event(input.play_move_cell)
+    def _jump_to_selected_play_cell():
+        payload = input.play_move_cell()
+        if not payload or not isinstance(payload, dict):
+            return
+        ply = payload.get("ply")
+        try:
+            ply = int(ply)
+        except (TypeError, ValueError):
+            return
+        _set_play_ply(ply)
+
+    @reactive.Effect
+    @reactive.event(input.play_reset)
+    def _play_reset():
+        play_moves_val.set([])
+        play_sans_val.set([])
+        play_ply_val.set(0)
+        play_status_val.set("White to move.")
+
+    @reactive.Effect
+    @reactive.event(input.play_move)
+    def _play_move():
+        payload = input.play_move()
+        if not payload or not isinstance(payload, dict):
+            return
+
+        if input.play_opponent() == "engine" and _play_board().turn == chess.BLACK:
+            play_status_val.set("Waiting for Stockfish.")
+            return
+
+        from_sq = payload.get("from")
+        to_sq = payload.get("to")
+        promotion = payload.get("promotion") or ""
+        if not from_sq or not to_sq:
+            return
+        try:
+            move = chess.Move.from_uci(f"{from_sq}{to_sq}{promotion}")
+        except ValueError:
+            play_status_val.set("Invalid move format.")
+            return
+
+        board = _apply_play_move(move)
+        if board is None:
+            return
+
+        if board.is_game_over():
+            play_status_val.set("Game over.")
+            return
+
+        if input.play_opponent() != "engine" or board.turn != chess.BLACK:
+            return
+
+        try:
+            engine_move, _, _ = engine_best_move(
+                board, input.play_skill(), PLAY_ENGINE_TIME
+            )
+        except Exception as exc:
+            play_status_val.set(f"Engine unavailable: {exc}")
+            return
+
+        if engine_move is None or engine_move not in board.legal_moves:
+            play_status_val.set("Engine did not return a legal move.")
+            return
+
+        _apply_play_move(engine_move)
+
+    @reactive.Effect
+    def _sync_play_board():
+        board = _play_board()
+        session.send_custom_message("play_set_fen", {"fen": board.fen()})
+        if board.is_checkmate():
+            play_status_val.set("Checkmate.")
+        elif board.is_stalemate():
+            play_status_val.set("Stalemate.")
+        elif board.is_insufficient_material():
+            play_status_val.set("Draw by insufficient material.")
+        else:
+            side = "White" if board.turn == chess.WHITE else "Black"
+            play_status_val.set(f"{side} to move.")
+
+    @reactive.Effect
+    def _sync_play_orientation():
+        orientation = "black" if input.play_rotate() else "white"
+        session.send_custom_message(
+            "play_set_orientation", {"orientation": orientation}
+        )
+
+    @reactive.Effect
+    def _sync_play_eval():
+        nonlocal last_play_eval_fen
+        if not input.play_eval():
+            play_eval_val.set("Eval: --")
+            last_play_eval_fen = None
+            return
+
+        board = _play_board()
+        fen = board.fen()
+        if fen == last_play_eval_fen:
+            return
+        last_play_eval_fen = fen
+        try:
+            _, score, pv = engine_best_move(
+                board, input.play_skill(), PLAY_ENGINE_TIME
+            )
+        except Exception as exc:
+            play_eval_val.set(f"Eval: unavailable ({exc})")
+            return
+        play_eval_val.set(format_engine_eval(board, score, pv))
+
     @render.ui
     def board_view():
         board = _current_board()
@@ -637,6 +809,23 @@ def server(input, output, session):
             annotations_val(),
             move_rows,
         )
+
+    @render.ui
+    def play_move_list():
+        return render_move_list(
+            play_sans_val(),
+            play_ply_val(),
+            {},
+            move_rows,
+        )
+
+    @render.text
+    def play_status():
+        return play_status_val()
+
+    @render.text
+    def play_eval():
+        return play_eval_val()
 
     @render_widget
     def eval_graph():
