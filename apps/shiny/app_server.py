@@ -24,7 +24,6 @@ from utils import (
     format_eval_line,
     get_input_params,
     move_rows,
-    normalize_san,
     parse_pgn,
     render_game_info_table,
     render_move_list,
@@ -34,15 +33,6 @@ from utils import (
 )
 
 BOARD_SIZE = 480
-
-# Greyscale color palette for chess board
-BOARD_COLORS = {
-    "square light": "#E8E8E8",  # Very light grey
-    "square dark": "#A0A0A0",  # Medium greyish
-    "margin": "#303030",  # Dark charcoal border
-    "coord": "#FFFFFF",  # White text for A-H, 1-8
-}
-
 
 def server(input, output, session):
     theme_picker_server()
@@ -494,64 +484,51 @@ def server(input, output, session):
         arrows = []
         moves = moves_val()
         ply = ply_val()
-        sans = sans_val()
+        last_move = moves[ply - 1] if ply > 0 and ply <= len(moves) else None
+        arrow_keys: set[tuple[int, int]] = set()
 
-        # Show last move as a grey arrow
-        if ply > 0 and ply <= len(moves):
-            last_move = moves[ply - 1]
+        def _append_arrow(move: chess.Move) -> None:
+            key = (move.from_square, move.to_square)
+            if key in arrow_keys:
+                return
+            arrow_keys.add(key)
             arrows.append(
                 chess.svg.Arrow(
-                    last_move.from_square,
-                    last_move.to_square,
-                    color="#808080",  # Grey arrow
+                    move.from_square,
+                    move.to_square,
+                    color="green",
                 )
             )
 
-        # Show best move arrow only after analysis is complete
-        best_move_uci = engine_move_val()
-        if best_move_uci and analysis_done():
-            try:
-                best_move = chess.Move.from_uci(best_move_uci)
-                # Check if the next actual move matches the engine move
-                next_move = moves[ply] if ply < len(moves) else None
-                moves_match = next_move and next_move.uci() == best_move_uci
+        if analysis_done():
+            # Prior ply best move.
+            prev_pv_lines = prev_pv_val()
+            if prev_pv_lines and ply > 0:
+                prev_san = extract_first_pv_move(prev_pv_lines[0])
+                if prev_san:
+                    prev_board = _board_at_ply(ply - 1)
+                    try:
+                        prev_best_move = prev_board.parse_san(prev_san)
+                    except ValueError:
+                        prev_best_move = None
+                    if prev_best_move:
+                        _append_arrow(prev_best_move)
 
-                # Green arrow if moves match, otherwise show the engine move in green
-                # and the actual move in orange
-                if moves_match:
-                    arrows.append(
-                        chess.svg.Arrow(
-                            best_move.from_square,
-                            best_move.to_square,
-                            color="green",
-                        )
-                    )
-                else:
-                    # Show engine move in green
-                    arrows.append(
-                        chess.svg.Arrow(
-                            best_move.from_square,
-                            best_move.to_square,
-                            color="green",
-                        )
-                    )
-                    # Show actual next move in orange if it exists
-                    if next_move:
-                        arrows.append(
-                            chess.svg.Arrow(
-                                next_move.from_square,
-                                next_move.to_square,
-                                color="orange",
-                            )
-                        )
-            except ValueError:
-                pass
+            # Current ply best move.
+            best_move_uci = engine_move_val()
+            if best_move_uci:
+                try:
+                    best_move = chess.Move.from_uci(best_move_uci)
+                except ValueError:
+                    best_move = None
+                if best_move:
+                    _append_arrow(best_move)
 
         svg = chess.svg.board(
             board=board,
             size=BOARD_SIZE,
             arrows=arrows,
-            colors=BOARD_COLORS,
+            lastmove=last_move,
         )
         return ui.HTML(svg)
 
@@ -589,23 +566,12 @@ def server(input, output, session):
         sans = sans_val()
         pv_lines = pv_val()
         next_san = sans[ply] if ply < len(sans) else None
-
-        # Check if next move matches top engine move
-        highlight_color = "success"  # Default green
-        if analysis_done() and next_san and pv_lines:
-            top_engine_move = extract_first_pv_move(pv_lines[0])
-            if top_engine_move:
-                moves_match = normalize_san(top_engine_move) == normalize_san(next_san)
-                if not moves_match:
-                    highlight_color = "warning"  # Orange for non-matching moves
-
         return render_pv_list(
             pv_lines,
             next_san,
-            analysis_done(),
+            False,
             title="PV:",
             empty_msg="PV will appear here.",
-            highlight_color=highlight_color,
         )
 
     @render.ui
