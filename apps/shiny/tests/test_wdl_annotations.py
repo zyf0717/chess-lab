@@ -79,7 +79,7 @@ def test_checkmate_annotated_as_ok():
             1,
             time_limit=0.1,
             worker_count=1,
-            annotation_metric="cpl",
+            evaluation_metric="cpl",
         )
 
         # Get results - now returns 6 elements: id, display_annotations, label_annotations, summary, evals, wdl_scores

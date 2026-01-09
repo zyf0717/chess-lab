@@ -24,7 +24,7 @@ def test_format_eval_line_uses_annotation():
         ["e4"],
         {1: "?! (120)"},  # Stored annotation is ignored
         lambda value: "??",  # Classify function returns ??
-        annotation_metric="cpl",
+        evaluation_metric="cpl",
         prev_wdl_score=None,
     )
     # Should use calculated value (??), not stored annotation (?!)
@@ -41,7 +41,7 @@ def test_format_eval_line_with_pv():
         lambda value: "",
         pv_lines=["-0.10 — Nf3 Nc6 Bb5", "+0.25 — d4 exd4 Qxd4"],
         wdl_score=0.48,
-        annotation_metric="cpl",
+        evaluation_metric="cpl",
         prev_wdl_score=None,
     )
     assert line == "1... e5 | OK | Eval: -0.10 | CPL: 50 | ES: 0.48"
@@ -54,7 +54,7 @@ def test_format_eval_line_checkmate_annotation():
         ["f3", "e5", "g4", "Qh4#"],
         {4: "OK"},
         lambda value: "??",
-        annotation_metric="cpl",
+        evaluation_metric="cpl",
         prev_wdl_score=None,
     )
     assert line == "2... Qh4# | OK | Eval: -- | CPL: -- | ES: --"
@@ -70,7 +70,7 @@ def test_format_eval_line_with_mate_score():
         lambda value: "",
         pv_lines=["Mate in 2 — Qh4# Kf1"],
         wdl_score=1.0,
-        annotation_metric="cpl",
+        evaluation_metric="cpl",
         prev_wdl_score=None,
     )
     assert line == "1... e5 | OK | Eval: Mate in 2 | CPL: -- | ES: 1.00"

@@ -88,10 +88,77 @@ CUSTOM_CSS = """
     #prev_move, #next_move {
         flex-grow: 2;
     }
+
+    #playBoard .play-last-move {
+        background-color: rgba(186, 202, 68, 0.55) !important;
+    }
 """
 
 # JS utility for enabling/disabling elements visually and functionally
 CUSTOM_JS = """
+    const initPlayBoard = () => {
+        const boardEl = document.getElementById("playBoard");
+        if (!boardEl || !window.Chessboard) return;
+        const clearLastMove = () => {
+            boardEl
+                .querySelectorAll(".play-last-move")
+                .forEach((el) => el.classList.remove("play-last-move"));
+        };
+        const highlightLastMove = (from, to) => {
+            clearLastMove();
+            if (!from || !to) return;
+            [from, to].forEach((square) => {
+                const el =
+                    boardEl.querySelector(`.square-${square}`) ||
+                    boardEl.querySelector(`[data-square="${square}"]`);
+                if (el) {
+                    el.classList.add("play-last-move");
+                }
+            });
+        };
+        const board = Chessboard("playBoard", {
+            draggable: true,
+            pieceTheme:
+                "https://raw.githubusercontent.com/oakmac/chessboardjs/master/website/img/chesspieces/wikipedia/{piece}.png",
+            position: "start",
+            onDrop: function(source, target) {
+                Shiny.setInputValue("player_move", {from: source, to: target}, {priority: "event"});
+                highlightLastMove(source, target);
+                // Let the board move; server will correct invalid moves if needed.
+                return undefined;
+            }
+        });
+
+        Shiny.addCustomMessageHandler("board_update", function(message) {
+            const payload = typeof message === "string" ? { fen: message } : message || {};
+            if (!payload.fen) return;
+            board.position(payload.fen, false);
+            if (payload.last_move) {
+                const from = payload.last_move.slice(0, 2);
+                const to = payload.last_move.slice(2, 4);
+                highlightLastMove(from, to);
+            } else {
+                clearLastMove();
+            }
+        });
+
+        Shiny.addCustomMessageHandler("board_flip", function(message) {
+            board.flip();
+        });
+    };
+
+    document.addEventListener("DOMContentLoaded", initPlayBoard);
+    document.addEventListener("shiny:connected", initPlayBoard);
+
+    const observeTable = (containerId, onChange) => {
+        const container = document.getElementById(containerId);
+        if (!container || container._observerAttached) return;
+        const observer = new MutationObserver(onChange);
+        observer.observe(container, { childList: true, subtree: true });
+        container._observerAttached = true;
+        onChange();
+    };
+
     const scrollSelectedIntoView = () => {
         const container = document.getElementById("move_table_container");
         if (!container) return;
@@ -104,17 +171,26 @@ CUSTOM_JS = """
         }
     };
 
-    const observeMoveTable = () => {
-        const container = document.getElementById("move_table_container");
-        if (!container || container._observerAttached) return;
-        const observer = new MutationObserver(() => scrollSelectedIntoView());
-        observer.observe(container, { childList: true, subtree: true });
-        container._observerAttached = true;
+    const scrollPlayMovesToBottom = () => {
+        const container = document.getElementById("play_move_table_container");
+        if (!container) return;
+        const cells = container.querySelectorAll("td[data-ply]");
+        const lastCell = cells[cells.length - 1];
+        const maxPly = lastCell ? parseInt(lastCell.dataset.ply || "0", 10) : 0;
+        const lastPly = parseInt(container.dataset.lastPly || "0", 10);
+        if (maxPly === lastPly) return;
+        container.dataset.lastPly = String(maxPly);
+        requestAnimationFrame(() => {
+            container.scrollTop = container.scrollHeight;
+        });
     };
 
     document.addEventListener("click", (event) => {
         const cell = event.target.closest("td[data-ply]");
         if (!cell) return;
+
+        const container = cell.closest("#move_table_container");
+        if (!container) return;
 
         const table = cell.closest("table");
         if (table) {
@@ -134,8 +210,13 @@ CUSTOM_JS = """
         scrollSelectedIntoView();
     });
 
-    document.addEventListener("DOMContentLoaded", observeMoveTable);
-    document.addEventListener("shiny:connected", observeMoveTable);
+    const initMoveObservers = () => {
+        observeTable("move_table_container", scrollSelectedIntoView);
+        observeTable("play_move_table_container", scrollPlayMovesToBottom);
+    };
+
+    document.addEventListener("DOMContentLoaded", initMoveObservers);
+    document.addEventListener("shiny:connected", initMoveObservers);
 
     document.addEventListener("keydown", (event) => {
         if (event.target.tagName === "INPUT" || event.target.tagName === "TEXTAREA") {
@@ -218,8 +299,8 @@ app_ui = ui.page_navbar(
                     open=False,
                 ),
                 ui.input_select(
-                    "annotation_metric",
-                    "Annotation metric",
+                    "evaluation_metric",
+                    "Evaluation metric",
                     choices={
                         "cpl": "Centipawn loss (CPL)",
                         "wdl": "Expected score (WDL)",
@@ -277,6 +358,47 @@ app_ui = ui.page_navbar(
         ),
     ),
     ui.nav_panel(
+        "Play",
+        ui.page_sidebar(
+            ui.sidebar(
+                ui.input_action_button("flipPlayBoard", "Flip Board"),
+                ui.input_action_button("analyze_play_position", "Analyze Position"),
+                ui.input_action_button("resetPlayBoard", "Reset Board"),
+                ui.input_select(
+                    "engine_side",
+                    "Engine plays",
+                    choices={
+                        "none": "None",
+                        "black": "Black",
+                        "white": "White",
+                    },
+                    selected="black",
+                ),
+            ),
+            ui.layout_columns(
+                ui.card(
+                    ui.div(
+                        ui.div(id="playBoard", style="width: 480px"),
+                        class_="d-flex justify-content-center",
+                    ),
+                ),
+                ui.card(
+                    ui.card_header("Moves"),
+                    ui.div(
+                        ui.output_ui("play_move_list"),
+                        id="play_move_table_container",
+                        class_="move-table-wrap",
+                    ),
+                    ui.div(
+                        ui.download_button("download_play_pgn", "Download PGN"),
+                        class_="d-flex justify-content-center mt-2",
+                    ),
+                ),
+                col_widths=[7, 5],
+            ),
+        ),
+    ),
+    ui.nav_panel(
         "Library",
         ui.page_sidebar(
             ui.sidebar(
@@ -293,6 +415,14 @@ app_ui = ui.page_navbar(
     fillable=True,
     header=[
         ui.tags.style(CUSTOM_CSS),
+        ui.tags.link(
+            rel="stylesheet",
+            href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css",
+        ),
+        ui.tags.script(
+            src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"
+        ),
         ui.tags.script(CUSTOM_JS),
     ],
+    id="main_nav",
 )

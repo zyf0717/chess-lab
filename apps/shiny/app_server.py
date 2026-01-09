@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import queue
 import threading
 import time
@@ -7,16 +8,13 @@ import time
 import chess
 import chess.svg
 import plotly.graph_objects as go
-from analysis import (
-    annotate_game_worker,
-    classify_delta,
-    stream_analysis_worker,
-)
+from analysis import annotate_game_worker, classify_delta, stream_analysis_worker
 from shiny import reactive, render, ui
 from shinyswatch import theme_picker_server
 from shinywidgets import render_widget
 from utils import (
     DEFAULT_INFO,
+    best_move_uci,
     board_at_ply,
     create_eval_graph,
     extract_first_pv_move,
@@ -30,13 +28,15 @@ from utils import (
     render_pv_list,
     render_summary_table,
     reset_game_state,
+    sans_from_board,
 )
 
 BOARD_SIZE = 480
 
+
 def server(input, output, session):
     theme_picker_server()
-
+    game_state = reactive.Value(chess.Board())
     game_val = reactive.Value(None)
     moves_val = reactive.Value([])
     sans_val = reactive.Value([])
@@ -134,6 +134,8 @@ def server(input, output, session):
         if ply != ply_val():
             ply_val.set(ply)
 
+    play_jump_to_end = False
+
     def _load_pgn(pgn_text: str) -> None:
         if not pgn_text.strip():
             reset_game_state(state)
@@ -157,6 +159,10 @@ def server(input, output, session):
 
     @reactive.Effect
     def _auto_analyze():
+        nonlocal play_jump_to_end
+        if play_jump_to_end:
+            play_jump_to_end = False
+            return
         pgn_text = input.pgn_text() or ""
         if pgn_text.strip():
             _load_pgn(pgn_text)
@@ -242,7 +248,7 @@ def server(input, output, session):
         params = get_input_params(input)
         think_time = params["think_time"]
         thread_count = params["threads"]
-        annotation_metric = input.annotation_metric() or "cpl"
+        evaluation_metric = input.evaluation_metric() or "cpl"
 
         if annotation_stop is not None:
             annotation_stop.set()
@@ -276,7 +282,7 @@ def server(input, output, session):
                 current_id,
                 think_time,
                 thread_count,
-                annotation_metric,
+                evaluation_metric,
             ),
             daemon=True,
         )
@@ -542,7 +548,7 @@ def server(input, output, session):
             classify_delta,
             pv_val(),
             wdl_val(),
-            input.annotation_metric() or "cpl",
+            input.evaluation_metric() or "cpl",
             wdl_scores_val(),  # Pass all WDL scores for calculating deltas
             prev_wdl_val(),  # Pass previous WDL from live analysis
         )
@@ -592,7 +598,7 @@ def server(input, output, session):
         return render_summary_table(
             summary_val(),
             annotation_status(),
-            input.annotation_metric() or "cpl",
+            input.evaluation_metric() or "cpl",
         )
 
     @render.ui
@@ -626,3 +632,141 @@ def server(input, output, session):
             return fw
 
         return fig
+
+    @reactive.Effect
+    @reactive.event(input.flipPlayBoard)
+    async def _flip_play_board():
+        await session.send_custom_message("board_flip", {})
+
+    @reactive.Effect
+    @reactive.event(input.player_move)
+    async def process_move():
+        move_data = input.player_move()
+        if not move_data:
+            return
+
+        source = move_data.get("from")
+        target = move_data.get("to")
+        if not source or not target or source == target:
+            return
+
+        current_board = game_state.get().copy()
+
+        # Convert JS coordinates to Python move object
+        try:
+            move = chess.Move.from_uci(f"{source}{target}")
+        except chess.InvalidMoveError:
+            return
+
+        if move in current_board.legal_moves:
+            # Update Python truth; the client already moved the piece.
+            current_board.push(move)
+            game_state.set(current_board)
+            return
+
+        # Move failed: force JS to revert to current valid state.
+        last_move = (
+            current_board.move_stack[-1].uci() if current_board.move_stack else None
+        )
+        await session.send_custom_message(
+            "board_update", {"fen": current_board.fen(), "last_move": last_move}
+        )
+
+    engine_task: asyncio.Task | None = None
+
+    async def _run_engine_move(
+        board_snapshot: chess.Board, start_fen: str, params: dict
+    ) -> None:
+        engine_move_uci = await asyncio.to_thread(
+            best_move_uci,
+            board_snapshot,
+            params["think_time"],
+            params["threads"],
+            3,
+        )
+        if not engine_move_uci:
+            return
+
+        latest = game_state.get()
+        if latest.fen() != start_fen:
+            return
+
+        try:
+            move = chess.Move.from_uci(engine_move_uci)
+        except chess.InvalidMoveError:
+            return
+        if move not in latest.legal_moves:
+            return
+
+        updated = latest.copy()
+        updated.push(move)
+        game_state.set(updated)
+        last_move = updated.move_stack[-1].uci() if updated.move_stack else None
+        await session.send_custom_message(
+            "board_update", {"fen": updated.fen(), "last_move": last_move}
+        )
+
+    @reactive.Effect
+    @reactive.event(game_state, input.engine_side)
+    def computer_move():
+        nonlocal engine_task
+        board = game_state.get().copy()
+        if board.is_game_over():
+            return
+        engine_side = (input.engine_side() or "black").lower()
+        if engine_side == "none":
+            return
+        if engine_side not in ("white", "black"):
+            engine_side = "black"
+        engine_turn = chess.WHITE if engine_side == "white" else chess.BLACK
+        if board.turn != engine_turn:
+            return
+        if engine_task is not None and not engine_task.done():
+            return
+
+        params = get_input_params(input)
+        start_fen = board.fen()
+        loop = asyncio.get_running_loop()
+        engine_task = loop.create_task(
+            _run_engine_move(board.copy(), start_fen, params)
+        )
+
+    @render.ui
+    def play_move_list():
+        board = game_state.get().copy()
+        sans = sans_from_board(board)
+        current_ply = len(sans)
+        return render_move_list(sans, current_ply, {}, move_rows)
+
+    @render.download(filename="play.pgn")
+    def download_play_pgn():
+        board = game_state.get().copy()
+        game = chess.pgn.Game.from_board(board)
+        exporter = chess.pgn.StringExporter(
+            headers=False, variations=False, comments=False
+        )
+        return game.accept(exporter)
+
+    @reactive.Effect
+    @reactive.event(input.analyze_play_position)
+    def _analyze_play_position():
+        nonlocal play_jump_to_end
+        board = game_state.get().copy()
+        game = chess.pgn.Game.from_board(board)
+        exporter = chess.pgn.StringExporter(
+            headers=False, variations=False, comments=False
+        )
+        pgn_text = game.accept(exporter)
+        play_jump_to_end = True
+        _load_pgn(pgn_text)
+        _set_ply(len(moves_val()))
+        ui.update_text_area("pgn_text", value=pgn_text)
+        ui.update_navset("main_nav", selected="Analysis")
+
+    @reactive.Effect
+    @reactive.event(input.resetPlayBoard)
+    async def _reset_play_board():
+        game_state.set(chess.Board())
+        await session.send_custom_message(
+            "board_update", {"fen": chess.STARTING_FEN, "last_move": None}
+        )

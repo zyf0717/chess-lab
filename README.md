@@ -27,14 +27,14 @@ An interactive chess analysis workbench built with Python Shiny. It streams Stoc
 - Engine lines (MultiPV 1-8)
 - Engine time per move (0.3, 1, 3, 10 seconds)
 - CPU threads (1-8)
-- Annotation metric (CPL or WDL)
+- Evaluation metric (CPL or ES/WDL)
 - Theme selection
 
 ## Installation
 
 ### Prerequisites
 - Python 3.12
-- Conda (recommended) or pip
+- Conda
 
 ### Setup with Conda
 
@@ -57,13 +57,7 @@ shiny run --reload --port 8008 ./apps/shiny/app.py
 
 4. Open your browser to `http://localhost:8008`
 
-### Setup with pip
-
-```bash
-pip install shiny chess pandas plotly pydantic shinywidgets anywidget shinyswatch
-```
-
-Alternatively, you can run with:
+5. Alternatively, you can run with:
 ```bash
 python ./apps/shiny/chess_lab.py
 ```

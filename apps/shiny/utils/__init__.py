@@ -1,7 +1,14 @@
 """Utility modules for chess analysis application."""
 
 from .chart_utils import create_eval_graph
-from .game_utils import board_at_ply, extract_game_info, move_rows, parse_pgn
+from .engine_utils import best_move_uci
+from .game_utils import (
+    board_at_ply,
+    extract_game_info,
+    move_rows,
+    parse_pgn,
+    sans_from_board,
+)
 from .state_utils import DEFAULT_INFO, get_input_params, reset_game_state
 from .ui_helpers import (
     extract_first_pv_move,
@@ -15,10 +22,12 @@ from .ui_helpers import (
 
 __all__ = [
     "create_eval_graph",
+    "best_move_uci",
     "board_at_ply",
     "extract_game_info",
     "move_rows",
     "parse_pgn",
+    "sans_from_board",
     "get_input_params",
     "reset_game_state",
     "DEFAULT_INFO",

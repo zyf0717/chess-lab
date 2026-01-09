@@ -27,6 +27,19 @@ def parse_pgn(pgn_text: str):
     return game, moves, sans
 
 
+def sans_from_board(board: chess.Board) -> list[str]:
+    """Return SAN moves for a board's move stack."""
+    temp = chess.Board()
+    sans: list[str] = []
+    for move in board.move_stack:
+        try:
+            sans.append(temp.san(move))
+        except ValueError:
+            break
+        temp.push(move)
+    return sans
+
+
 def move_rows(sans: list[str]) -> list[tuple[int, str, str]]:
     """Group SAN moves into numbered rows."""
     rows = []

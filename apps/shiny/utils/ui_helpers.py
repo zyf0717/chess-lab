@@ -60,7 +60,7 @@ def render_pv_list(
 def render_summary_table(
     summary: dict,
     status: str,
-    annotation_metric: str = "cpl",
+    evaluation_metric: str = "cpl",
 ) -> ui.Tag:
     """Render the annotation summary table."""
     if status == "running" and not summary:
@@ -69,7 +69,7 @@ def render_summary_table(
         return ui.p("No annotations yet.", class_="text-muted")
 
     # Choose column order based on annotation metric
-    if annotation_metric == "wdl":
+    if evaluation_metric == "wdl":
         order = ["Best", "Excellent", "Good", "?!", "?", "??"]
     else:
         order = ["??", "?", "?!", "OK"]
@@ -228,7 +228,7 @@ def format_eval_line(
     classify_func,
     pv_lines: list[str] | None = None,
     wdl_score: float | None = None,
-    annotation_metric: str = "cpl",
+    evaluation_metric: str = "cpl",
     wdl_scores: list[float] | None = None,
     prev_wdl_score: float | None = None,
 ) -> str:
@@ -259,7 +259,7 @@ def format_eval_line(
         move_text = sans[ply - 1]
 
         # Get annotation - always calculate on-the-fly from engine data
-        if annotation_metric == "cpl":
+        if evaluation_metric == "cpl":
             # For CPL metric: use error labels or "OK"
             if cpl_value is not None:
                 label = classify_func(-cpl_value)

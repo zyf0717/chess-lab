@@ -85,13 +85,13 @@ def annotate_game_worker(
     current_id: int,
     time_limit: float,
     worker_count: int,
-    annotation_metric: str = "cpl",
+    evaluation_metric: str = "cpl",
 ):
     """Annotate all moves in a game."""
     try:
         start_time = time.monotonic()
         base_board = chess.Board(base_fen)
-        include_wdl = annotation_metric == "wdl"
+        include_wdl = evaluation_metric == "wdl"
         eval_result = evaluate_positions(
             base_board,
             move_list,
