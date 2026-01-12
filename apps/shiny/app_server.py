@@ -681,8 +681,10 @@ def server(input, output, session):
             best_move_uci,
             board_snapshot,
             params["think_time"],
-            params["threads"],
+            params.get("threads", 1),
             3,
+            params.get("elo", None),
+            params.get("depth", None),
         )
         if not engine_move_uci:
             return

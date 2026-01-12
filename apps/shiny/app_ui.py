@@ -365,10 +365,10 @@ app_ui = ui.page_navbar(
                 ui.input_action_button("analyze_play_position", "Analyze Position"),
                 ui.input_action_button("resetPlayBoard", "Reset Board"),
                 ui.input_slider(
-                    "enginePlayLevel",
-                    "Engine Level",
+                    "enginePlayElo",
+                    "Engine Elo",
                     min=1400,
-                    max=3500,
+                    max=3000,
                     value=1600,
                     step=100,
                 ),

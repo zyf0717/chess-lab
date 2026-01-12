@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import stat
@@ -12,6 +13,8 @@ from pathlib import Path
 
 import chess
 import chess.engine
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_URLS = {
     (
@@ -217,14 +220,24 @@ def wdl_expected_score(wdl) -> float | None:
 
 def _configure_engine(
     engine: chess.engine.SimpleEngine,
+    elo: int | None = None,
     threads: int | None = None,
     include_wdl: bool = False,
 ) -> None:
     if threads is not None:
         try:
             engine.configure({"Threads": max(1, int(threads))})
-        except Exception:
-            pass
+            logger.info(f"Configured engine threads: {threads}")
+        except Exception as e:
+            logger.warning(f"Failed to configure threads: {e}")
+    if elo is not None:
+        try:
+            clamped_elo = max(1400, min(elo, 3000))
+            engine.configure({"UCI_LimitStrength": True})
+            engine.configure({"UCI_Elo": clamped_elo})
+            logger.info(f"Configured engine ELO: {clamped_elo} (requested: {elo})")
+        except Exception as e:
+            logger.warning(f"Failed to configure ELO: {e}")
     if include_wdl:
         try:
             engine.configure({"UCI_ShowWDL": True})
@@ -236,6 +249,7 @@ def stream_analysis(
     board: chess.Board,
     time_limit: float = 10.0,
     depth: int | None = None,
+    elo: int | None = None,
     multipv: int = 3,
     threads: int = 1,
     stop_event=None,
@@ -245,11 +259,13 @@ def stream_analysis(
     path = ensure_stockfish_binary()
     engine = chess.engine.SimpleEngine.popen_uci(str(path))
     try:
-        _configure_engine(engine, threads=threads, include_wdl=True)
+        _configure_engine(engine, elo=elo, threads=threads, include_wdl=True)
         if depth is None:
             limit = chess.engine.Limit(time=time_limit)
+            logger.info(f"Search limit: time={time_limit:.2f}s")
         else:
             limit = chess.engine.Limit(time=time_limit, depth=depth)
+            logger.info(f"Search limit: time={time_limit:.2f}s, depth={depth}")
 
         best_move_uci = None
         prev_cp = None

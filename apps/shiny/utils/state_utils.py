@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 DEFAULT_INFO = {
     "date_only": False,
     "date": "Unknown",
@@ -47,6 +46,25 @@ def reset_game_state(reactive_values: dict) -> None:
         reactive_values[key].set(value)
 
 
+def _scale_resources_by_elo(elo: int) -> tuple[int, float, int]:
+    """
+    Scale computational resources based on ELO rating.
+    Returns (threads, think_time, depth) scaled linearly from 1400-3000.
+
+    ELO 1400: 1 thread, 0.2s, depth 5
+    ELO 2200: 4 threads, 0.6s, depth 12 (midpoint)
+    ELO 3000: 8 threads, 1.0s, depth 20
+    """
+    elo_clamped = max(1400, min(elo, 3000))
+    elo_normalized = (elo_clamped - 1400) / (3000 - 1400)  # 0.0 to 1.0
+
+    threads = 1 + int(elo_normalized * 7)  # 1 to 8
+    think_time = 0.2 + elo_normalized * 0.8  # 0.2 to 1.0
+    depth = 5 + int(elo_normalized * 15)  # 5 to 20
+
+    return threads, think_time, depth
+
+
 def get_input_params(input_obj) -> dict:
     """Extract and clamp engine parameters."""
     try:
@@ -67,8 +85,21 @@ def get_input_params(input_obj) -> dict:
         multipv = 3
     multipv = max(1, min(multipv, 8))
 
+    try:
+        elo = int(input_obj.enginePlayElo())
+    except (TypeError, ValueError, AttributeError):
+        elo = None
+
+    depth = None
+    if elo is not None:
+        elo = max(1400, min(elo, 3000))
+        # Scale resources for play mode based on ELO
+        thread_count, think_time, depth = _scale_resources_by_elo(elo)
+
     return {
         "think_time": think_time,
         "threads": thread_count,
         "multipv": multipv,
+        "elo": elo,
+        "depth": depth,
     }
