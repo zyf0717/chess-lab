@@ -386,7 +386,7 @@ app_ui = ui.page_navbar(
             ui.layout_columns(
                 ui.card(
                     ui.div(
-                        ui.div(id="playBoard", style="width: 480px"),
+                        ui.div(id="playBoard", style="width: 720px"),
                         class_="d-flex justify-content-center",
                     ),
                 ),
@@ -402,7 +402,7 @@ app_ui = ui.page_navbar(
                         class_="d-flex justify-content-center mt-2",
                     ),
                 ),
-                col_widths=[7, 5],
+                col_widths=[8, 4],
             ),
         ),
     ),
