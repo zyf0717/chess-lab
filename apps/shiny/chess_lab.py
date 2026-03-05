@@ -1,6 +1,10 @@
 import logging
 
-from app import app
+from app_server import server
+from app_ui import app_ui
+from shiny import App
+
+app = App(app_ui, server)
 
 # Configure logging
 logging.basicConfig(

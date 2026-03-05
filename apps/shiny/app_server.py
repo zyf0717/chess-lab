@@ -73,6 +73,7 @@ def server(input, output, session):
     last_analysis_key: tuple[str, int, float, int] | None = None
     engine_move_val = reactive.Value(None)
     eval_trigger_time = reactive.Value(0.0)  # Track when to trigger eval
+    eval_fw_val: reactive.Value[go.FigureWidget | None] = reactive.Value(None)
     annotation_queue: queue.Queue[
         tuple[
             int,
@@ -168,13 +169,6 @@ def server(input, output, session):
             _load_pgn(pgn_text)
             return
 
-        upload = input.pgn_upload()
-        if upload:
-            path = upload[0]["datapath"]
-            with open(path, "r", encoding="utf-8") as handle:
-                _load_pgn(handle.read())
-                return
-
         _load_pgn("")
 
     @reactive.Effect
@@ -188,9 +182,14 @@ def server(input, output, session):
 
     @reactive.Effect
     @reactive.event(input.pgn_upload)
-    def _clear_text_on_upload():
-        if input.pgn_upload() and (input.pgn_text() or "").strip():
-            ui.update_text_area("pgn_text", value="")
+    def _populate_text_from_upload():
+        upload = input.pgn_upload()
+        if not upload:
+            return
+        path = upload[0]["datapath"]
+        with open(path, "r", encoding="utf-8") as handle:
+            content = handle.read()
+        ui.update_text_area("pgn_text", value=content)
 
     @reactive.Effect
     @reactive.event(input.prev_move)
@@ -629,9 +628,34 @@ def server(input, output, session):
             for trace in fw.data:
                 trace.on_click(_on_click_callback)
 
+            eval_fw_val.set(fw)
             return fw
 
+        eval_fw_val.set(None)
         return fig
+
+    @reactive.Effect
+    def _update_ply_vline():
+        ply = ply_val()
+        fw = eval_fw_val()
+        if fw is None:
+            return
+        evals = evals_val()
+        if not evals or not (0 <= ply < len(evals)):
+            fw.layout.shapes = []
+            return
+        fw.layout.shapes = [
+            dict(
+                type="line",
+                x0=ply,
+                x1=ply,
+                y0=0,
+                y1=1,
+                xref="x",
+                yref="paper",
+                line=dict(color="black", width=1.5, dash="dot"),
+            )
+        ]
 
     @reactive.Effect
     @reactive.event(input.flipPlayBoard)

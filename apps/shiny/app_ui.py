@@ -345,12 +345,12 @@ app_ui = ui.page_navbar(
                         ),
                     ),
                     ui.card(
-                        ui.card_header("Move Summary"),
-                        ui.output_ui("move_summary"),
-                    ),
-                    ui.card(
                         ui.card_header("Evaluation Graph"),
                         output_widget("eval_graph"),
+                    ),
+                    ui.card(
+                        ui.card_header("Move Summary"),
+                        ui.output_ui("move_summary"),
                     ),
                 ),
                 col_widths=[12, 7, 5],

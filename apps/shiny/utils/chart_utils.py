@@ -97,6 +97,11 @@ def create_eval_graph(evals: list[int], status: str) -> go.Figure | go.FigureWid
             zeroline=True,
             zerolinecolor="rgba(0,0,0,0.5)",
             zerolinewidth=2,
+            showspikes=True,
+            spikecolor="grey",
+            spikethickness=1,
+            spikemode="across",
+            spikesnap="cursor",
         ),
         yaxis=dict(
             range=[-8, 8],
