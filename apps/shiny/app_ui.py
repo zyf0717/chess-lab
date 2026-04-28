@@ -266,7 +266,7 @@ CUSTOM_JS = """
 app_ui = ui.page_navbar(
     ui.nav_panel(
         "Analysis",
-        ui.page_sidebar(
+        ui.layout_sidebar(
             ui.sidebar(
                 ui.input_file("pgn_upload", "Upload PGN:", accept=[".pgn", ".txt"]),
                 ui.input_text_area(
@@ -359,7 +359,7 @@ app_ui = ui.page_navbar(
     ),
     ui.nav_panel(
         "Play",
-        ui.page_sidebar(
+        ui.layout_sidebar(
             ui.sidebar(
                 ui.input_action_button("flipPlayBoard", "Flip Board"),
                 ui.input_action_button("analyze_play_position", "Analyze Position"),
@@ -408,7 +408,7 @@ app_ui = ui.page_navbar(
     ),
     ui.nav_panel(
         "Library",
-        ui.page_sidebar(
+        ui.layout_sidebar(
             ui.sidebar(
                 ui.p("Coming soon."),
             ),
