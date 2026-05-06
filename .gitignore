@@ -217,3 +217,5 @@ data/
 # CRON jobs
 cron.sh
 nohup.out
+
+.vscode/
