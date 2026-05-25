@@ -574,6 +574,7 @@ def server(input, output, session):
             pv_lines=pv_val(),
             prior_pv_lines=prev_pv_val(),
             wdl=wdl_val(),
+            prev_wdl=prev_wdl_val(),
             headers=info_val(),
         )
 

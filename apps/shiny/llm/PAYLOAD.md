@@ -79,12 +79,29 @@ The user message is built from `CommentaryContext` and includes:
   - parsed integer from the eval line when available
 - `current expected score`
   - WDL-derived value when available
+- `prior expected score`
+  - prior-ply White-POV ES/WDL when available
+- `wdl delta`
+  - both White-POV and mover-POV changes from prior ply to current ply
 - `current PVs`
   - one bullet per live engine PV line
 - `prior ply best line`
   - one bullet per prior-ply PV line
+- `current PV eval score`
+  - extracted from the first live PV line when present
+- `prior PV eval score`
+  - extracted from the first prior-ply PV line when present
+- `eval delta`
+  - both White-POV and mover-POV numeric change when both PV evals are numeric
 - `game headers`
   - filtered to non-empty string values not equal to `Unknown`
+
+The user prompt also includes an explicit metric guide:
+
+- PV eval is White POV
+- ES/WDL is White POV in `[0.00, 1.00]`
+- CPL is non-negative and mover-centric
+- changes should be interpreted in both White POV and mover POV
 
 ## Streaming Response Handling
 

@@ -82,6 +82,7 @@ def test_build_commentary_messages_include_position_context():
         pv_lines=["+0.45 — Bc4 Nc6 d3"],
         prior_pv_lines=["+0.30 — Nf3 Nc6 Bb5"],
         wdl=0.58,
+        prev_wdl=0.52,
         headers={"white": "Alpha", "black": "Beta", "date": "2026.01.04"},
     )
 
@@ -91,6 +92,14 @@ def test_build_commentary_messages_include_position_context():
     assert context.move_history == ["e4", "e5", "Nf3"]
     assert "Recent SAN history: e4 e5 Nf3" in user_message
     assert "Eval line: CPL: 35" in user_message
+    assert "Expected score (ES/WDL) is also White POV and ranges from 0.00 to 1.00." in user_message
+    assert "Current PV eval (White POV): +0.45" in user_message
+    assert "Prior PV eval (White POV): +0.30" in user_message
+    assert "Eval delta from prior to current (White POV): +0.15" in user_message
+    assert "Eval delta caused by played move (mover POV): +0.15" in user_message
+    assert "Current ES/WDL (White POV): 0.58" in user_message
+    assert "Prior ES/WDL (White POV): 0.52" in user_message
+    assert "ES/WDL delta caused by played move (mover POV): +0.06" in user_message
     assert "+0.45 — Bc4 Nc6 d3" in user_message
     assert "date: 2026.01.04" in user_message
 
@@ -105,6 +114,7 @@ def test_stream_commentary_yields_deltas_and_complete(monkeypatch):
         pv_lines=["+0.20 — e4 e5 Nf3"],
         prior_pv_lines=[],
         wdl=0.5,
+        prev_wdl=None,
         headers={},
     )
 
@@ -145,6 +155,7 @@ def test_stream_commentary_yields_cancelled_when_stop_event_is_set(monkeypatch):
         pv_lines=["+0.20 — e4 e5 Nf3"],
         prior_pv_lines=[],
         wdl=0.5,
+        prev_wdl=None,
         headers={},
     )
     stop_event = threading.Event()
