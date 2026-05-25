@@ -92,6 +92,20 @@ CUSTOM_CSS = """
     #playBoard .play-last-move {
         background-color: rgba(186, 202, 68, 0.55) !important;
     }
+
+    .commentary-body {
+        white-space: pre-wrap;
+        line-height: 1.5;
+    }
+
+    .commentary-shell {
+        display: grid;
+        gap: 0.75rem;
+    }
+
+    .commentary-meta {
+        font-size: 0.9rem;
+    }
 """
 
 # JS utility for enabling/disabling elements visually and functionally
@@ -333,6 +347,14 @@ app_ui = ui.page_navbar(
                         ui.output_text("eval_line"),
                         ui.output_ui("pv"),
                         ui.output_ui("prev_pv"),
+                    ),
+                    ui.card(
+                        ui.card_header("LLM Commentary"),
+                        ui.input_action_button(
+                            "generate_commentary",
+                            "Generate Commentary",
+                        ),
+                        ui.output_ui("commentary_panel"),
                     ),
                 ),
                 ui.div(

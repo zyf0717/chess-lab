@@ -34,6 +34,10 @@ _DEFAULT_STATE = {
     "prev_wdl": None,
     "engine_move": None,
     "info": lambda: DEFAULT_INFO.copy(),
+    "commentary_status": "idle",
+    "commentary_text": "",
+    "commentary_result": None,
+    "commentary_error": "",
 }
 
 

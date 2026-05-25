@@ -1,5 +1,9 @@
 import logging
 
+from llm import bootstrap_environment
+
+bootstrap_environment()
+
 from app_server import server
 from app_ui import app_ui
 from shiny import App

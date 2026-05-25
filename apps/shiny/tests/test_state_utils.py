@@ -47,6 +47,10 @@ def test_reset_game_state_sets_defaults():
         "evals": DummyReactive(),
         "engine_move": DummyReactive(),
         "info": DummyReactive(),
+        "commentary_status": DummyReactive(),
+        "commentary_text": DummyReactive(),
+        "commentary_result": DummyReactive(),
+        "commentary_error": DummyReactive(),
     }
 
     reset_game_state(reactive_values)
@@ -64,3 +68,7 @@ def test_reset_game_state_sets_defaults():
     assert reactive_values["evals"].value == []
     assert reactive_values["engine_move"].value is None
     assert reactive_values["info"].value["white"] == "Unknown"
+    assert reactive_values["commentary_status"].value == "idle"
+    assert reactive_values["commentary_text"].value == ""
+    assert reactive_values["commentary_result"].value is None
+    assert reactive_values["commentary_error"].value == ""
