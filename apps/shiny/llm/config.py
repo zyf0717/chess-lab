@@ -21,6 +21,8 @@ class LLMConfig:
     base_url: str
     model: str
     api_key: str | None
+    chat_path: str = "/v1/chat/completions"
+    reasoning_effort: str | None = None
     timeout_sec: float = _DEFAULT_TIMEOUT_SEC
     max_tokens: int = _DEFAULT_MAX_TOKENS
     temperature: float = _DEFAULT_TEMPERATURE
@@ -114,6 +116,16 @@ def load_llm_config(
     if not model:
         return None, "LLM commentary disabled: set LLM_MODEL in the repo root .env."
 
+    chat_path = (source.get("LLM_CHAT_PATH") or "/v1/chat/completions").strip()
+    if not chat_path:
+        chat_path = "/v1/chat/completions"
+    if not chat_path.startswith("/"):
+        chat_path = f"/{chat_path}"
+
+    reasoning_effort = (source.get("LLM_REASONING_EFFORT") or "").strip().lower() or None
+    if reasoning_effort not in {None, "low", "medium", "high"}:
+        return None, "LLM_REASONING_EFFORT must be one of: low, medium, high."
+
     timeout_sec, error = _parse_float(
         source.get("LLM_TIMEOUT_SEC"),
         default=_DEFAULT_TIMEOUT_SEC,
@@ -147,6 +159,8 @@ def load_llm_config(
         base_url=base_url,
         model=model,
         api_key=api_key,
+        chat_path=chat_path,
+        reasoning_effort=reasoning_effort,
         timeout_sec=timeout_sec,
         max_tokens=max_tokens,
         temperature=temperature,

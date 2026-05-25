@@ -37,8 +37,10 @@ class OpenAICompatibleClient:
         headers = {"Content-Type": "application/json"}
         if self._config.api_key:
             headers["Authorization"] = f"Bearer {self._config.api_key}"
+        if self._config.reasoning_effort:
+            headers["X-Reasoning-Effort"] = self._config.reasoning_effort
 
-        url = f"{self._config.base_url}/v1/chat/completions"
+        url = f"{self._config.base_url}{self._config.chat_path}"
         payload = self.build_payload(messages)
         timeout = httpx.Timeout(self._config.timeout_sec)
 

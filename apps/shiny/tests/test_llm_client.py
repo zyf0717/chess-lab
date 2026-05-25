@@ -16,12 +16,14 @@ class _StreamingHandler(BaseHTTPRequestHandler):
     response_body = ""
     captured_body = None
     captured_headers = None
+    captured_path = None
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length).decode("utf-8")
         type(self).captured_body = json.loads(body)
         type(self).captured_headers = dict(self.headers)
+        type(self).captured_path = self.path
 
         self.send_response(type(self).response_status)
         if type(self).response_status >= 400:
@@ -53,6 +55,8 @@ def test_stream_chat_builds_openai_compatible_payload():
         base_url="https://example.test",
         model="gpt-test",
         api_key="secret",
+        chat_path="/smart",
+        reasoning_effort="low",
         timeout_sec=30,
         max_tokens=256,
         temperature=0.1,
@@ -82,21 +86,26 @@ def test_stream_chat_handles_sse_and_malformed_lines():
     handler.response_body = ""
     handler.captured_body = None
     handler.captured_headers = None
+    handler.captured_path = None
     server, thread = _run_server(handler)
     try:
         config = LLMConfig(
             base_url=f"http://127.0.0.1:{server.server_address[1]}",
             model="gpt-test",
             api_key="secret",
+            chat_path="/smart",
+            reasoning_effort="low",
         )
         client = OpenAICompatibleClient(config)
 
         chunks = list(client.stream_chat([{"role": "user", "content": "hello"}]))
 
         assert chunks == ["Hello", " world"]
+        assert handler.captured_path == "/smart"
         assert handler.captured_body["model"] == "gpt-test"
         assert handler.captured_body["stream"] is True
         assert handler.captured_headers["Authorization"] == "Bearer secret"
+        assert handler.captured_headers["X-Reasoning-Effort"] == "low"
     finally:
         server.shutdown()
         server.server_close()
@@ -114,6 +123,8 @@ def test_stream_chat_raises_on_http_error():
             base_url=f"http://127.0.0.1:{server.server_address[1]}",
             model="gpt-test",
             api_key=None,
+            chat_path="/smart",
+            reasoning_effort=None,
         )
         client = OpenAICompatibleClient(config)
 
