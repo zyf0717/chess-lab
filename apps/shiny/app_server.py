@@ -152,7 +152,9 @@ def server(input, output, session):
     ) -> None:
         commentary_text.set("")
         commentary_result.set(None)
-        commentary_error.set(error or (llm_config_error or "" if not _llm_enabled() else ""))
+        commentary_error.set(
+            error or (llm_config_error or "" if not _llm_enabled() else "")
+        )
         commentary_status.set(status or _default_commentary_status())
 
     def _stop_commentary_worker() -> None:
@@ -186,6 +188,48 @@ def server(input, output, session):
             and game_val() is not None
             and has_usable_engine_context(eval_val(), pv_val())
         )
+
+    def _commentary_panel_open() -> bool:
+        return bool(input.commentary_accordion_open())
+
+    def _start_commentary_generation() -> None:
+        nonlocal commentary_id, commentary_queue, commentary_stop, commentary_thread
+        if not _commentary_available():
+            if not _llm_enabled():
+                _clear_commentary_state(status="disabled")
+            return
+
+        board = _current_board()
+        context = build_commentary_context(
+            board,
+            ply=ply_val(),
+            sans=sans_val(),
+            eval_text=eval_val(),
+            pv_lines=pv_val(),
+            prior_pv_lines=prev_pv_val(),
+            wdl=wdl_val(),
+            prev_wdl=prev_wdl_val(),
+            headers=info_val(),
+        )
+
+        _stop_commentary_worker()
+        commentary_id += 1
+        current_id = commentary_id
+        commentary_stop = threading.Event()
+        commentary_queue = queue.Queue()
+        commentary_text.set("")
+        commentary_result.set(None)
+        commentary_error.set("")
+        commentary_status.set("streaming")
+
+        def _worker() -> None:
+            for event in stream_commentary(context, stop_event=commentary_stop):
+                commentary_queue.put(
+                    (current_id, event.kind, event.delta, event.result, event.error)
+                )
+
+        commentary_thread = threading.Thread(target=_worker, daemon=True)
+        commentary_thread.start()
 
     play_jump_to_end = False
 
@@ -535,67 +579,27 @@ def server(input, output, session):
         was_streaming = commentary_thread is not None and commentary_thread.is_alive()
         last_position_key = current_key
         _stop_commentary_worker()
+        ui.update_accordion("commentary_accordion", show=False)
         if was_streaming and _llm_enabled():
             _clear_commentary_state(status="cancelled")
         else:
             _clear_commentary_state()
 
     @reactive.Effect
-    def _update_commentary_button_state():
-        status = commentary_status()
-        if status == "streaming":
-            ui.update_action_button(
-                "generate_commentary",
-                label="Streaming Commentary...",
-                disabled=True,
-            )
+    @reactive.event(
+        input.commentary_accordion_open,
+        analysis_ready,
+        game_val,
+        ply_val,
+        eval_val,
+        pv_val,
+    )
+    def _generate_commentary_on_open():
+        if not _commentary_panel_open():
             return
-        ui.update_action_button(
-            "generate_commentary",
-            label="Generate Commentary",
-            disabled=not _commentary_available(),
-        )
-
-    @reactive.Effect
-    @reactive.event(input.generate_commentary)
-    def _generate_commentary():
-        nonlocal commentary_id, commentary_queue, commentary_stop, commentary_thread
-        if not _commentary_available():
-            if not _llm_enabled():
-                _clear_commentary_state(status="disabled")
+        if commentary_status() in {"streaming", "complete"}:
             return
-
-        board = _current_board()
-        context = build_commentary_context(
-            board,
-            ply=ply_val(),
-            sans=sans_val(),
-            eval_text=eval_val(),
-            pv_lines=pv_val(),
-            prior_pv_lines=prev_pv_val(),
-            wdl=wdl_val(),
-            prev_wdl=prev_wdl_val(),
-            headers=info_val(),
-        )
-
-        _stop_commentary_worker()
-        commentary_id += 1
-        current_id = commentary_id
-        commentary_stop = threading.Event()
-        commentary_queue = queue.Queue()
-        commentary_text.set("")
-        commentary_result.set(None)
-        commentary_error.set("")
-        commentary_status.set("streaming")
-
-        def _worker() -> None:
-            for event in stream_commentary(context, stop_event=commentary_stop):
-                commentary_queue.put(
-                    (current_id, event.kind, event.delta, event.result, event.error)
-                )
-
-        commentary_thread = threading.Thread(target=_worker, daemon=True)
-        commentary_thread.start()
+        _start_commentary_generation()
 
     @reactive.Effect
     def _drain_commentary_queue():
@@ -809,12 +813,13 @@ def server(input, output, session):
                 )
             )
         elif status == "idle":
-            sections.append(
-                ui.p(
-                    "Generate commentary for the current position.",
-                    class_="text-muted commentary-meta",
-                )
-            )
+            # sections.append(
+            #     ui.p(
+            #         "Expand the commentary panel to generate commentary for the current position.",
+            #         class_="text-muted commentary-meta",
+            #     )
+            # )
+            pass
 
         if result is not None:
             if result.summary:

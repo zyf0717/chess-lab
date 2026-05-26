@@ -218,4 +218,8 @@ data/
 cron.sh
 nohup.out
 
+# VS Code
 .vscode/
+
+# Playwright tests
+.playwright-cli
