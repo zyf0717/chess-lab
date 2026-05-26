@@ -19,18 +19,19 @@ def test_bootstrap_environment_loads_env_file(tmp_path, monkeypatch):
     assert os.environ["LLM_MODEL"] == "test-model"
 
 
-def test_load_llm_config_requires_base_url():
-    config, error = load_llm_config({"LLM_MODEL": "gpt-test"})
+def test_load_llm_config_requires_base_url(monkeypatch):
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    config, error = load_llm_config({})
     assert config is None
     assert "LLM_BASE_URL" in error
 
 
-def test_load_llm_config_accepts_optional_api_key():
+def test_load_llm_config_accepts_optional_api_key_and_model():
     config, error = load_llm_config(
         {
             "LLM_BASE_URL": "https://example.test/",
             "LLM_CHAT_PATH": "smart",
-            "LLM_MODEL": "gpt-test",
             "LLM_REASONING_EFFORT": "low",
             "LLM_TIMEOUT_SEC": "12.5",
             "LLM_MAX_TOKENS": "512",
@@ -40,6 +41,7 @@ def test_load_llm_config_accepts_optional_api_key():
     assert error is None
     assert config is not None
     assert config.base_url == "https://example.test"
+    assert config.model is None
     assert config.chat_path == "/smart"
     assert config.api_key is None
     assert config.reasoning_effort == "low"

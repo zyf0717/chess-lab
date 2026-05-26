@@ -17,13 +17,15 @@ class OpenAICompatibleClient:
         self._config = config
 
     def build_payload(self, messages: list[dict[str, str]]) -> dict[str, Any]:
-        return {
-            "model": self._config.model,
+        payload = {
             "messages": messages,
             "stream": True,
             "temperature": self._config.temperature,
             "max_tokens": self._config.max_tokens,
         }
+        if self._config.model:
+            payload["model"] = self._config.model
+        return payload
 
     def stream_chat(
         self,

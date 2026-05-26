@@ -31,7 +31,6 @@ The client sends this OpenAI-compatible shape:
 
 ```json
 {
-  "model": "Qwen/Qwen3.6-35B-A3B",
   "messages": [
     {
       "role": "system",
@@ -47,6 +46,8 @@ The client sends this OpenAI-compatible shape:
   "max_tokens": 2000
 }
 ```
+
+`model` is optional. When `LLM_MODEL` is unset, the payload omits `model` entirely so `/smart` can auto-route.
 
 ## Message Construction
 
@@ -131,7 +132,7 @@ The payload and route are controlled by root `.env`:
 ```dotenv
 LLM_BASE_URL=http://127.0.0.1:12340
 LLM_CHAT_PATH=/smart
-LLM_MODEL=Qwen/Qwen3.6-35B-A3B
+LLM_MODEL=
 LLM_API_KEY=
 LLM_REASONING_EFFORT=low
 LLM_TIMEOUT_SEC=30

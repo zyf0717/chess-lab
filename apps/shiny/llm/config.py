@@ -19,7 +19,7 @@ _ENV_LOADED = False
 @dataclass(frozen=True, slots=True)
 class LLMConfig:
     base_url: str
-    model: str
+    model: str | None
     api_key: str | None
     chat_path: str = "/v1/chat/completions"
     reasoning_effort: str | None = None
@@ -112,9 +112,7 @@ def load_llm_config(
     if not base_url:
         return None, "LLM commentary disabled: set LLM_BASE_URL in the repo root .env."
 
-    model = (source.get("LLM_MODEL") or "").strip()
-    if not model:
-        return None, "LLM commentary disabled: set LLM_MODEL in the repo root .env."
+    model = (source.get("LLM_MODEL") or "").strip() or None
 
     chat_path = (source.get("LLM_CHAT_PATH") or "/v1/chat/completions").strip()
     if not chat_path:

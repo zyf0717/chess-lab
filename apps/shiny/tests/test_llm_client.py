@@ -53,7 +53,7 @@ def _run_server(handler):
 def test_stream_chat_builds_openai_compatible_payload():
     config = LLMConfig(
         base_url="https://example.test",
-        model="gpt-test",
+        model=None,
         api_key="secret",
         chat_path="/smart",
         reasoning_effort="low",
@@ -66,7 +66,6 @@ def test_stream_chat_builds_openai_compatible_payload():
     payload = client.build_payload([{"role": "user", "content": "hello"}])
 
     assert payload == {
-        "model": "gpt-test",
         "messages": [{"role": "user", "content": "hello"}],
         "stream": True,
         "temperature": 0.1,
@@ -91,7 +90,7 @@ def test_stream_chat_handles_sse_and_malformed_lines():
     try:
         config = LLMConfig(
             base_url=f"http://127.0.0.1:{server.server_address[1]}",
-            model="gpt-test",
+            model=None,
             api_key="secret",
             chat_path="/smart",
             reasoning_effort="low",
@@ -102,7 +101,7 @@ def test_stream_chat_handles_sse_and_malformed_lines():
 
         assert chunks == ["Hello", " world"]
         assert handler.captured_path == "/smart"
-        assert handler.captured_body["model"] == "gpt-test"
+        assert "model" not in handler.captured_body
         assert handler.captured_body["stream"] is True
         assert handler.captured_headers["Authorization"] == "Bearer secret"
         assert handler.captured_headers["X-Reasoning-Effort"] == "low"
@@ -121,7 +120,7 @@ def test_stream_chat_raises_on_http_error():
     try:
         config = LLMConfig(
             base_url=f"http://127.0.0.1:{server.server_address[1]}",
-            model="gpt-test",
+            model=None,
             api_key=None,
             chat_path="/smart",
             reasoning_effort=None,
