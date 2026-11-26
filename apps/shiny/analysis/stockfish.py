@@ -317,6 +317,9 @@ def stream_analysis(
                 prev_lines = None
                 prev_wdl = None
 
+        if stop_event is not None and stop_event.is_set():
+            return
+
         start = time.monotonic()
         with engine.analysis(board, limit, multipv=multipv) as analysis:
             latest: dict[int, str] = {}

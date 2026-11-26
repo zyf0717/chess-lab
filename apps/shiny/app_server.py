@@ -8,7 +8,12 @@ import time
 import chess
 import chess.svg
 import plotly.graph_objects as go
-from analysis import annotate_game_worker, classify_delta, stream_analysis_worker
+from analysis import (
+    PositionAnalysisUpdate,
+    analyze_position,
+    annotate_game_worker,
+    classify_delta,
+)
 from llm import (
     CommentaryResult,
     build_commentary_context,
@@ -68,22 +73,9 @@ def server(input, output, session):
     commentary_text = reactive.Value("")
     commentary_result: reactive.Value[CommentaryResult | None] = reactive.Value(None)
     commentary_error = reactive.Value(llm_config_error or "")
-    analysis_queue: queue.Queue[
-        tuple[
-            int,
-            int | str | None,
-            list[str],
-            str | None,
-            list[str] | None,
-            float | None,
-            float | None,
-            bool,
-        ]
-    ] = queue.Queue()
+    analysis_queue: queue.Queue[PositionAnalysisUpdate | Exception] | None = None
     analysis_thread: threading.Thread | None = None
     analysis_stop: threading.Event | None = None
-    analysis_id = 0
-    last_analysis_key: tuple[str, int, float, int] | None = None
     engine_move_val = reactive.Value(None)
     eval_trigger_time = reactive.Value(0.0)  # Track when to trigger eval
     eval_fw_val: reactive.Value[go.FigureWidget | None] = reactive.Value(None)
@@ -164,6 +156,12 @@ def server(input, output, session):
         commentary_stop = None
         commentary_thread = None
 
+    def _cancel_position_analysis() -> None:
+        nonlocal analysis_queue
+        if analysis_stop is not None:
+            analysis_stop.set()
+        analysis_queue = None
+
     def _shutdown_analysis() -> None:
         _stop_worker(analysis_stop, analysis_thread)
         _stop_worker(annotation_stop, annotation_thread)
@@ -235,15 +233,12 @@ def server(input, output, session):
     play_jump_to_end = False
 
     def _load_pgn(pgn_text: str) -> None:
-        nonlocal analysis_id, annotation_id, last_analysis_key
-        if analysis_stop is not None:
-            analysis_stop.set()
+        nonlocal annotation_id
+        _cancel_position_analysis()
         if annotation_stop is not None:
             annotation_stop.set()
-        analysis_id += 1
         annotation_id += 1
         _stop_commentary_worker()
-        last_analysis_key = None
         eval_trigger_time.set(0.0)
         reset_game_state(state)
         _clear_commentary_state()
@@ -409,62 +404,30 @@ def server(input, output, session):
         return _board_at_ply(ply_val())
 
     def _start_streaming_eval(
-        board: chess.Board, prev_fen: str | None, mover_is_white: bool
+        board: chess.Board, previous_board: chess.Board | None
     ) -> None:
-        nonlocal analysis_id, analysis_stop, analysis_queue, analysis_thread, last_analysis_key
+        nonlocal analysis_stop, analysis_queue, analysis_thread
         params = get_input_params(input)
-        multipv = params["multipv"]
-        engine_threads = params["threads"]
-        think_time = params["think_time"]
-        fen = board.fen()
-        analysis_key = (fen, multipv, think_time, engine_threads)
-        if analysis_key == last_analysis_key:
-            return
+        stop_event = threading.Event()
+        updates: queue.Queue[PositionAnalysisUpdate | Exception] = queue.Queue()
 
-        last_analysis_key = analysis_key
-        analysis_id += 1
-        current_id = analysis_id
+        def _worker() -> None:
+            try:
+                for update in analyze_position(
+                    board,
+                    previous_board,
+                    time_limit=params["think_time"],
+                    multipv=params["multipv"],
+                    threads=params["threads"],
+                    stop_event=stop_event,
+                ):
+                    updates.put(update)
+            except Exception as exc:
+                updates.put(exc)
 
-        if analysis_stop is not None:
-            analysis_stop.set()
-        analysis_stop = threading.Event()
-        local_queue: queue.Queue[
-            tuple[
-                int,
-                int | str | None,
-                list[str],
-                str | None,
-                list[str] | None,
-                float | None,
-                float | None,
-                bool,
-            ]
-        ] = queue.Queue()
-        analysis_queue = local_queue
-
-        eval_val.set("CPL: …")
-        pv_val.set([])
-        prev_pv_val.set([])
-        wdl_val.set(None)
-        prev_wdl_val.set(None)
-        analysis_done.set(False)
-        engine_move_val.set(None)
-
-        analysis_thread = threading.Thread(
-            target=stream_analysis_worker,
-            args=(
-                fen,
-                prev_fen,
-                analysis_stop,
-                local_queue,
-                current_id,
-                mover_is_white,
-                think_time,
-                multipv,
-                engine_threads,
-            ),
-            daemon=True,
-        )
+        analysis_stop = stop_event
+        analysis_queue = updates
+        analysis_thread = threading.Thread(target=_worker, daemon=True)
         analysis_thread.start()
 
     @reactive.Effect
@@ -477,9 +440,15 @@ def server(input, output, session):
         _ = input.engine_threads()
         _ = input.think_time()
 
-        engine_move_val.set(None)
+        _cancel_position_analysis()
+        eval_val.set("CPL: …")
+        pv_val.set([])
+        prev_pv_val.set([])
+        wdl_val.set(None)
+        prev_wdl_val.set(None)
         analysis_done.set(False)
-        eval_trigger_time.set(time.time() + 0.2)
+        engine_move_val.set(None)
+        eval_trigger_time.set(time.monotonic() + 0.2)
 
     @reactive.Effect
     def _debounced_eval():
@@ -493,27 +462,12 @@ def server(input, output, session):
         if trigger_time == 0.0:
             return
 
-        if time.time() >= trigger_time:
+        if time.monotonic() >= trigger_time:
             eval_trigger_time.set(0.0)
-            board = _current_board()
             ply = ply_val()
-            prev_fen = None
-            if ply > 0:
-                prev_fen = _board_at_ply(ply - 1).fen()
-            _start_streaming_eval(board, prev_fen, not board.turn)
-
-    def _drain_latest_eval():
-        latest = None
-        analysis_complete = False
-        while True:
-            try:
-                item = analysis_queue.get_nowait()
-            except queue.Empty:
-                break
-            if item[0] == analysis_id:
-                latest = item
-                analysis_complete = analysis_complete or item[-1]
-        return latest, analysis_complete
+            board = _board_at_ply(ply)
+            previous_board = _board_at_ply(ply - 1) if ply > 0 else None
+            _start_streaming_eval(board, previous_board)
 
     def _drain_latest_annotation():
         latest = None
@@ -528,30 +482,37 @@ def server(input, output, session):
 
     @reactive.Effect
     def _drain_eval_queue():
-        nonlocal analysis_queue, analysis_id
         reactive.invalidate_later(0.2)
-        latest, analysis_complete = _drain_latest_eval()
+        if analysis_queue is None:
+            return
+
+        latest = None
+        while True:
+            try:
+                latest = analysis_queue.get_nowait()
+            except queue.Empty:
+                break
         if latest is None:
             return
-        _, message, lines, best_move, prev_pv, wdl_score, prev_wdl_score, _ = latest
 
-        if isinstance(message, str) and message.startswith("Engine unavailable"):
-            eval_val.set(message)
-        elif message is None:
-            eval_val.set("CPL: --")
-        else:
-            eval_val.set(f"CPL: {message}")
+        if isinstance(latest, Exception):
+            eval_val.set(f"Engine unavailable: {latest}")
+            pv_val.set([])
+            analysis_done.set(True)
+            return
 
-        pv_val.set(lines)
-        if prev_pv is not None:
-            prev_pv_val.set(prev_pv)
-        if best_move is not None:
-            engine_move_val.set(best_move)
-        if wdl_score is not None:
-            wdl_val.set(wdl_score)
-        if prev_wdl_score is not None:
-            prev_wdl_val.set(prev_wdl_score)
-        if analysis_complete:
+        cpl = latest.centipawn_loss
+        eval_val.set("CPL: --" if cpl is None else f"CPL: {cpl}")
+        pv_val.set(latest.pv_lines)
+        if latest.previous_pv_lines is not None:
+            prev_pv_val.set(latest.previous_pv_lines)
+        if latest.best_move_uci is not None:
+            engine_move_val.set(latest.best_move_uci)
+        if latest.white_expected_score is not None:
+            wdl_val.set(latest.white_expected_score)
+        if latest.previous_white_expected_score is not None:
+            prev_wdl_val.set(latest.previous_white_expected_score)
+        if latest.done:
             analysis_done.set(True)
 
     @reactive.Effect

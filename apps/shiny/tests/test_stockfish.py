@@ -1,4 +1,5 @@
 from contextlib import nullcontext
+from threading import Event
 from unittest.mock import Mock
 
 import chess
@@ -43,3 +44,25 @@ def test_stream_delta_stays_with_the_top_pv(monkeypatch):
     assert frames[-1][1] == ["+0.15 — 1... c5", "+0.80 — 1... e5"]
     assert frames[-1][2] == "c7c5"
     assert frames[-1][-1] is True
+
+
+def test_stream_skips_current_search_when_cancelled_during_previous_search(monkeypatch):
+    board = chess.Board()
+    board.push_san("e4")
+    stop_event = Event()
+    engine = Mock()
+
+    def cancel_previous_search(*args, **kwargs):
+        stop_event.set()
+        return []
+
+    engine.analyse.side_effect = cancel_previous_search
+    monkeypatch.setattr(stockfish, "ensure_stockfish_binary", lambda: "stockfish")
+    monkeypatch.setattr(chess.engine.SimpleEngine, "popen_uci", lambda _: engine)
+
+    updates = stockfish.stream_analysis(
+        board, stop_event=stop_event, best_move_board=board.root()
+    )
+    assert list(updates) == []
+    engine.analysis.assert_not_called()
+    engine.quit.assert_called_once_with()

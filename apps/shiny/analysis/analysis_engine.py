@@ -7,7 +7,7 @@ import threading
 import time
 
 import chess
-from analysis.stockfish import clamp_score, evaluate_positions, stream_analysis
+from analysis.stockfish import clamp_score, evaluate_positions
 
 
 def classify_delta(delta_cp: int) -> str:
@@ -169,74 +169,3 @@ def annotate_game_worker(
         )
     except Exception:
         out_queue.put((current_id, {}, {}, {}, [], []))
-
-
-def stream_analysis_worker(
-    fen_str: str,
-    prev_fen_str: str | None,
-    stop_event: threading.Event,
-    out_queue: queue.Queue,
-    current_id: int,
-    mover_is_white: bool,
-    think_time: float,
-    multipv: int,
-    engine_threads: int,
-):
-    """Stream analysis updates for a position."""
-    try:
-        board_obj = chess.Board(fen_str)
-        prev_board = chess.Board(prev_fen_str) if prev_fen_str else None
-
-        for (
-            delta_cp,
-            lines,
-            best_move,
-            prev_pv,
-            wdl_score,
-            prev_wdl_score,
-            done,
-        ) in stream_analysis(
-            board_obj,
-            time_limit=think_time,
-            multipv=multipv,
-            threads=engine_threads,
-            stop_event=stop_event,
-            best_move_board=prev_board,
-        ):
-            if stop_event.is_set():
-                break
-
-            if delta_cp is None:
-                out_queue.put(
-                    (
-                        current_id,
-                        None,
-                        lines,
-                        best_move,
-                        prev_pv,
-                        wdl_score,
-                        prev_wdl_score,
-                        done,
-                    )
-                )
-                continue
-
-            # Convert white-POV delta to mover CPL for display
-            delta_for_mover = delta_cp if mover_is_white else -delta_cp
-            cpl = max(0, -delta_for_mover)
-            out_queue.put(
-                (
-                    current_id,
-                    cpl,
-                    lines,
-                    best_move,
-                    prev_pv,
-                    wdl_score,
-                    prev_wdl_score,
-                    done,
-                )
-            )
-    except Exception as exc:
-        out_queue.put(
-            (current_id, f"Engine unavailable: {exc}", [], None, None, None, None, True)
-        )
