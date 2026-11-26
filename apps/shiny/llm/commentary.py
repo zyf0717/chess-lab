@@ -99,7 +99,7 @@ def build_commentary_context(
 ) -> CommentaryContext:
     start = max(0, ply - history_window)
     san = sans[ply - 1] if 0 < ply <= len(sans) else None
-    last_move_side = "White" if ply > 0 and (ply % 2) == 1 else "Black" if ply > 0 else None
+    last_move_side = chess.COLOR_NAMES[not board.turn].capitalize() if ply > 0 else None
     wdl_delta_white = (
         None if wdl is None or prev_wdl is None else wdl - prev_wdl
     )

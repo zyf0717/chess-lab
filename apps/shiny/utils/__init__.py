@@ -9,7 +9,7 @@ from .game_utils import (
     parse_pgn,
     sans_from_board,
 )
-from .state_utils import DEFAULT_INFO, get_input_params, reset_game_state
+from .state_utils import DEFAULT_INFO, get_input_params, get_play_params, reset_game_state
 from .ui_helpers import (
     extract_first_pv_move,
     format_eval_line,
@@ -29,6 +29,7 @@ __all__ = [
     "parse_pgn",
     "sans_from_board",
     "get_input_params",
+    "get_play_params",
     "reset_game_state",
     "DEFAULT_INFO",
     "extract_first_pv_move",

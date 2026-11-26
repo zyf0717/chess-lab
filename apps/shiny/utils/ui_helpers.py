@@ -128,41 +128,29 @@ def render_move_list(
     current_ply: int,
     annotations: dict[int, str],
     move_rows_func,
+    *,
+    start_ply: int = 0,
 ) -> ui.Tag:
     """Render the move list table."""
     if not sans:
         return ui.p("No moves loaded.", class_="text-muted")
 
-    rows = move_rows_func(sans)
+    rows = move_rows_func(sans, start_ply)
     table_rows = []
 
-    for row_index, (move_no, white, black) in enumerate(rows):
-        white_ply = row_index * 2 + 1
-        black_ply = row_index * 2 + 2
-
-        white_attrs = {"data-ply": str(white_ply)}
-        if white_ply == current_ply:
-            white_attrs["class"] = "is-selected"
-        white_label = annotations.get(white_ply, "")
-        white_text = f"{white} {white_label}".rstrip()
-
-        if black:
-            black_attrs = {"data-ply": str(black_ply)}
-            if black_ply == current_ply:
-                black_attrs["class"] = "is-selected"
-            black_label = annotations.get(black_ply, "")
-            black_text = f"{black} {black_label}".rstrip()
-            black_cell = ui.tags.td(black_text, **black_attrs)
-        else:
-            black_cell = ui.tags.td("")
-
-        table_rows.append(
-            ui.tags.tr(
-                ui.tags.td(str(move_no)),
-                ui.tags.td(white_text, **white_attrs),
-                black_cell,
-            )
-        )
+    for move_no, white, black in rows:
+        white_ply = (move_no - 1) * 2 + 1 - start_ply
+        cells = [ui.tags.td(str(move_no))]
+        for ply, san in enumerate((white, black), start=white_ply):
+            if not san:
+                cells.append(ui.tags.td(""))
+                continue
+            attrs = {"data-ply": str(ply)}
+            if ply == current_ply:
+                attrs["class"] = "is-selected"
+            label = annotations.get(ply, "")
+            cells.append(ui.tags.td(f"{san} {label}".rstrip(), **attrs))
+        table_rows.append(ui.tags.tr(*cells))
 
     return ui.tags.table(
         {"class": "table table-sm move-table"},
@@ -231,6 +219,8 @@ def format_eval_line(
     evaluation_metric: str = "cpl",
     wdl_scores: list[float] | None = None,
     prev_wdl_score: float | None = None,
+    *,
+    start_ply: int = 0,
 ) -> str:
     """Format the eval header line."""
     if isinstance(eval_message, str) and eval_message.startswith("Engine unavailable"):
@@ -254,8 +244,10 @@ def format_eval_line(
     es_display = "--"
 
     if ply > 0 and ply <= len(sans):
-        move_no = (ply + 1) // 2
-        move_prefix = f"{move_no}. " if (ply % 2) == 1 else f"{move_no}... "
+        absolute_ply = start_ply + ply
+        mover_is_white = absolute_ply % 2 == 1
+        move_no = (absolute_ply + 1) // 2
+        move_prefix = f"{move_no}. " if mover_is_white else f"{move_no}... "
         move_text = sans[ply - 1]
 
         # Get annotation - always calculate on-the-fly from engine data
@@ -271,7 +263,6 @@ def format_eval_line(
             def _label_from_wdl(curr: float | None, prev: float | None) -> str | None:
                 if curr is None or prev is None:
                     return None
-                mover_is_white = (ply % 2) == 1
                 delta = curr - prev
                 delta_for_mover = delta if mover_is_white else -delta
                 return classify_wdl_delta(delta_for_mover)

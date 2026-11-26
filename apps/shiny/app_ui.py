@@ -211,11 +211,12 @@ CUSTOM_JS = """
             pieceTheme:
                 "https://raw.githubusercontent.com/oakmac/chessboardjs/master/website/img/chesspieces/wikipedia/{piece}.png",
             position: "start",
-            onDrop: function(source, target) {
-                Shiny.setInputValue("player_move", {from: source, to: target}, {priority: "event"});
+            onDrop: function(source, target, piece) {
+                const promotes = (piece === "wP" && target.endsWith("8")) ||
+                    (piece === "bP" && target.endsWith("1"));
+                const promotion = promotes ? document.getElementById("play_promotion").value : "";
+                Shiny.setInputValue("player_move", {from: source, to: target, promotion}, {priority: "event"});
                 highlightLastMove(source, target);
-                // Let the board move; server will correct invalid moves if needed.
-                return undefined;
             }
         });
 
@@ -546,6 +547,12 @@ app_ui = ui.page_navbar(
                         "white": "White",
                     },
                     selected="black",
+                ),
+                ui.input_select(
+                    "play_promotion",
+                    "Promote pawn to",
+                    choices={"q": "Queen", "r": "Rook", "b": "Bishop", "n": "Knight"},
+                    selected="q",
                 ),
             ),
             ui.layout_columns(

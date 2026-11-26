@@ -10,6 +10,13 @@ def test_move_rows_groups_sans():
     assert rows == [(1, "e4", "e5"), (2, "Nf3", "")]
 
 
+def test_move_rows_keeps_black_first_move_in_the_black_column():
+    assert move_rows(["Qe5", "Rxe5+"], start_ply=73) == [
+        (37, "", "Qe5"),
+        (38, "Rxe5+", ""),
+    ]
+
+
 def test_parse_pgn_and_board_at_ply():
     pgn = """
 [Event "Test"]

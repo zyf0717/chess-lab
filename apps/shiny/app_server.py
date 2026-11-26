@@ -28,6 +28,7 @@ from utils import (
     extract_game_info,
     format_eval_line,
     get_input_params,
+    get_play_params,
     move_rows,
     parse_pgn,
     render_game_info_table,
@@ -234,17 +235,20 @@ def server(input, output, session):
     play_jump_to_end = False
 
     def _load_pgn(pgn_text: str) -> None:
-        nonlocal last_analysis_key
+        nonlocal analysis_id, annotation_id, last_analysis_key
+        if analysis_stop is not None:
+            analysis_stop.set()
+        if annotation_stop is not None:
+            annotation_stop.set()
+        analysis_id += 1
+        annotation_id += 1
         _stop_commentary_worker()
-        if not pgn_text.strip():
-            last_analysis_key = None
-            reset_game_state(state)
-            _clear_commentary_state()
-            return
-
         last_analysis_key = None
+        eval_trigger_time.set(0.0)
         reset_game_state(state)
         _clear_commentary_state()
+        if not pgn_text.strip():
+            return
         try:
             game, moves, sans = parse_pgn(pgn_text)
         except ValueError:
@@ -496,8 +500,7 @@ def server(input, output, session):
             prev_fen = None
             if ply > 0:
                 prev_fen = _board_at_ply(ply - 1).fen()
-            mover_is_white = (ply % 2) == 1
-            _start_streaming_eval(board, prev_fen, mover_is_white)
+            _start_streaming_eval(board, prev_fen, not board.turn)
 
     def _drain_latest_eval():
         latest = None
@@ -728,6 +731,7 @@ def server(input, output, session):
             input.evaluation_metric() or "cpl",
             wdl_scores_val(),
             prev_wdl_val(),
+            start_ply=_board_at_ply(0).ply(),
         )
 
     @render.ui
@@ -882,6 +886,7 @@ def server(input, output, session):
             ply_val(),
             annotations_val(),
             move_rows,
+            start_ply=_board_at_ply(0).ply(),
         )
 
     @render_widget
@@ -948,16 +953,16 @@ def server(input, output, session):
             return
 
         current_board = game_state.get().copy()
+        promotion = move_data.get("promotion") or ""
 
         try:
-            move = chess.Move.from_uci(f"{source}{target}")
+            move = chess.Move.from_uci(f"{source}{target}{promotion}")
         except chess.InvalidMoveError:
             return
 
         if move in current_board.legal_moves:
             current_board.push(move)
             game_state.set(current_board)
-            return
 
         last_move = (
             current_board.move_stack[-1].uci() if current_board.move_stack else None
@@ -975,10 +980,10 @@ def server(input, output, session):
             best_move_uci,
             board_snapshot,
             params["think_time"],
-            params.get("threads", 1),
+            params["threads"],
             3,
-            params.get("elo", None),
-            params.get("depth", None),
+            params["elo"],
+            params["depth"],
         )
         if not engine_move_uci:
             return
@@ -1020,7 +1025,7 @@ def server(input, output, session):
         if engine_task is not None and not engine_task.done():
             return
 
-        params = get_input_params(input)
+        params = get_play_params(input)
         start_fen = board.fen()
         loop = asyncio.get_running_loop()
         engine_task = loop.create_task(
@@ -1041,7 +1046,7 @@ def server(input, output, session):
         exporter = chess.pgn.StringExporter(
             headers=False, variations=False, comments=False
         )
-        return game.accept(exporter)
+        yield game.accept(exporter)
 
     @reactive.Effect
     @reactive.event(input.analyze_play_position)
