@@ -104,6 +104,25 @@ def test_build_commentary_messages_include_position_context():
     assert "date: 2026.01.04" in user_message
 
 
+def test_commentary_uses_black_mover_for_black_first_pgn():
+    board = chess.Board("4k3/8/8/3q4/8/8/4R3/4K3 b - - 0 37")
+    board.push_san("Qe5")
+    context = build_commentary_context(
+        board,
+        ply=1,
+        sans=["Qe5"],
+        eval_text="CPL: 300",
+        pv_lines=["+2.00 — 38. Rxe5+"],
+        prior_pv_lines=["-1.00 — 37... Kf7"],
+        wdl=0.75,
+        prev_wdl=0.50,
+        headers={},
+    )
+    assert context.last_move_side == "Black"
+    assert context.eval_delta_mover == -3.0
+    assert context.wdl_delta_mover == -0.25
+
+
 def test_stream_commentary_yields_deltas_and_complete(monkeypatch):
     board = chess.Board()
     context = build_commentary_context(

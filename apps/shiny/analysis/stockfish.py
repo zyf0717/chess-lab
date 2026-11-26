@@ -319,7 +319,7 @@ def stream_analysis(
 
         start = time.monotonic()
         with engine.analysis(board, limit, multipv=multipv) as analysis:
-            latest: dict[int, tuple[str, str, str | None]] = {}
+            latest: dict[int, str] = {}
             latest_delta = None
             latest_lines: list[str] | None = None
             latest_best = None
@@ -330,29 +330,17 @@ def stream_analysis(
                     break
                 if "score" in info and "pv" in info:
                     score = info["score"].pov(chess.WHITE)
-                    curr_cp = clamp_score(score_to_cp(score))
-                    delta_cp = None
-                    if prev_cp is not None:
-                        delta_cp = curr_cp - prev_cp
-                    line_score = format_score(score)
-                    line_pv = format_pv(board, info["pv"])
+                    pv = info["pv"]
                     rank = int(info.get("multipv", 1))
-                    first_move = info["pv"][0].uci() if info["pv"] else None
 
-                    # Get WDL for rank 1 (top line)
                     if rank == 1:
+                        if prev_cp is not None:
+                            latest_delta = clamp_score(score_to_cp(score)) - prev_cp
                         latest_wdl = wdl_expected_score(info.get("wdl"))
+                        latest_best = pv[0].uci() if pv else None
 
-                    latest[rank] = (line_score, line_pv, first_move)
-                    ordered = [
-                        f"{line_score} — {line_pv}"
-                        for _, (line_score, line_pv, _) in sorted(latest.items())
-                    ]
-                    latest_delta = delta_cp
-                    latest_lines = ordered
-                    # Get the best move from the current position (rank 1)
-                    if 1 in latest:
-                        latest_best = latest[1][2]
+                    latest[rank] = f"{format_score(score)} — {format_pv(board, pv)}"
+                    latest_lines = [latest[i] for i in sorted(latest)]
                     yield latest_delta, latest_lines, latest_best, prev_lines, latest_wdl, prev_wdl, False
                 if time.monotonic() - start >= time_limit:
                     break

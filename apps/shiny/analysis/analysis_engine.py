@@ -42,6 +42,8 @@ def summarize_annotations(
     annotations: dict[int, str],
     cpl_by_ply: dict[int, int],
     total_plies: int,
+    *,
+    start_ply: int = 0,
 ) -> dict[str, dict[str, int | float]]:
     """Summarize annotation counts and averages."""
     all_labels = ["Best", "Excellent", "Good", "?!", "?", "??"]
@@ -54,7 +56,7 @@ def summarize_annotations(
     moves = {"White": 0, "Black": 0}
 
     for ply in range(1, total_plies + 1):
-        side = "White" if ply % 2 == 1 else "Black"
+        side = "White" if (start_ply + ply) % 2 else "Black"
         moves[side] += 1
         totals[side] += cpl_by_ply.get(ply, 0)
         label = annotations.get(ply, "")
@@ -113,13 +115,13 @@ def annotate_game_worker(
         display_annotations: dict[int, str] = {}
         cpl_by_ply: dict[int, int] = {}
 
-        board_copy = chess.Board(base_fen)
+        board_copy = base_board.copy()
         for ply in range(1, len(evals)):
+            mover_is_white = board_copy.turn
             board_copy.push(move_list[ply - 1])
             prev_cp = clamp_score(evals[ply - 1])
             curr_cp = clamp_score(evals[ply])
             delta = curr_cp - prev_cp
-            mover_is_white = (ply % 2) == 1
             delta_for_mover = delta if mover_is_white else -delta
             cpl_cp = max(0, -int(delta_for_mover))
             cpl_by_ply[ply] = cpl_cp
@@ -151,7 +153,9 @@ def annotate_game_worker(
                     display_annotations[ply] = f"{label} ({cpl_cp})"
                     label_annotations[ply] = label
 
-        summary = summarize_annotations(label_annotations, cpl_by_ply, len(move_list))
+        summary = summarize_annotations(
+            label_annotations, cpl_by_ply, len(move_list), start_ply=base_board.ply()
+        )
         summary["meta"] = {"duration_sec": time.monotonic() - start_time}
         out_queue.put(
             (

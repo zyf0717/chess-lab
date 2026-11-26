@@ -1,4 +1,4 @@
-from state_utils import get_input_params, reset_game_state
+from state_utils import get_input_params, get_play_params, reset_game_state
 
 
 class DummyInput:
@@ -16,6 +16,9 @@ class DummyInput:
     def multipv(self):
         return self._multipv
 
+    def enginePlayElo(self):
+        return 3000
+
 
 class DummyReactive:
     def __init__(self) -> None:
@@ -25,11 +28,10 @@ class DummyReactive:
         self.value = value
 
 
-def test_get_input_params_parses_and_clamps():
-    params = get_input_params(DummyInput("0.05", "12", "0"))
-    assert params["think_time"] == 0.1
-    assert params["threads"] == 8
-    assert params["multipv"] == 1
+def test_analysis_and_play_use_their_own_engine_settings():
+    inputs = DummyInput("0.05", "12", "0")
+    assert get_input_params(inputs) == {"think_time": 0.1, "threads": 8, "multipv": 1}
+    assert get_play_params(inputs) == {"think_time": 1.0, "threads": 8, "elo": 3000, "depth": 20}
 
 
 def test_reset_game_state_sets_defaults():

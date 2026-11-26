@@ -6,6 +6,7 @@ import queue
 import threading
 
 import chess
+from analysis import analysis_engine
 from analysis.analysis_engine import annotate_game_worker, classify_wdl_delta
 from analysis.stockfish import wdl_expected_score
 
@@ -53,6 +54,31 @@ def test_classify_wdl_delta_thresholds():
     assert classify_wdl_delta(-0.10) == "?"
     # Blunder
     assert classify_wdl_delta(-0.20) == "??"
+
+
+def test_black_first_move_counts_as_black_loss(monkeypatch):
+    board = chess.Board("4k3/8/8/3q4/8/8/4R3/4K3 b - - 0 37")
+    monkeypatch.setattr(
+        analysis_engine, "evaluate_positions", lambda *args, **kwargs: ([-100, 200], [0.4, 0.7])
+    )
+    results = queue.Queue()
+
+    annotate_game_worker(
+        board.fen(),
+        [board.parse_san("Qe5")],
+        threading.Event(),
+        results,
+        1,
+        time_limit=0.1,
+        worker_count=1,
+        evaluation_metric="wdl",
+    )
+
+    _, display, _, summary, _, _ = results.get_nowait()
+    assert display == {1: "?? (-0.30)"}
+    assert summary["Black"]["??"] == 1
+    assert summary["Black"]["avg_cpl"] == 300
+    assert summary["White"]["??"] == summary["White"]["OK"] == 0
 
 
 def test_checkmate_annotated_as_ok():
