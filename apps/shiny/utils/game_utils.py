@@ -40,11 +40,13 @@ def sans_from_board(board: chess.Board) -> list[str]:
     return sans
 
 
-def move_rows(sans: list[str]) -> list[tuple[int, str, str]]:
+def move_rows(sans: list[str], start_ply: int = 0) -> list[tuple[int, str, str]]:
     """Group SAN moves into numbered rows."""
+    if sans and start_ply % 2:
+        sans = ["", *sans]
     rows = []
     for idx in range(0, len(sans), 2):
-        move_no = idx // 2 + 1
+        move_no = start_ply // 2 + idx // 2 + 1
         white = sans[idx]
         black = sans[idx + 1] if idx + 1 < len(sans) else ""
         rows.append((move_no, white, black))

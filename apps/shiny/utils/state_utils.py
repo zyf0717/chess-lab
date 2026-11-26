@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 DEFAULT_INFO = {
     "date_only": False,
     "date": "Unknown",
@@ -35,6 +34,10 @@ _DEFAULT_STATE = {
     "prev_wdl": None,
     "engine_move": None,
     "info": lambda: DEFAULT_INFO.copy(),
+    "commentary_status": "idle",
+    "commentary_text": "",
+    "commentary_result": None,
+    "commentary_error": "",
 }
 
 
@@ -48,7 +51,7 @@ def reset_game_state(reactive_values: dict) -> None:
 
 
 def get_input_params(input_obj) -> dict:
-    """Extract and clamp engine parameters."""
+    """Extract and clamp Analysis engine parameters."""
     try:
         think_time = float(input_obj.think_time())
     except (TypeError, ValueError):
@@ -71,4 +74,20 @@ def get_input_params(input_obj) -> dict:
         "think_time": think_time,
         "threads": thread_count,
         "multipv": multipv,
+    }
+
+
+def get_play_params(input_obj) -> dict:
+    """Configure the Play engine from its Elo slider."""
+    try:
+        elo = int(input_obj.enginePlayElo())
+    except (TypeError, ValueError):
+        elo = 1600
+    elo = max(1400, min(elo, 3000))
+    strength = (elo - 1400) / (3000 - 1400)
+    return {
+        "think_time": 0.2 + strength * 0.8,
+        "threads": 1 + int(strength * 7),
+        "elo": elo,
+        "depth": 5 + int(strength * 15),
     }
