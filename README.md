@@ -136,7 +136,8 @@ Click "Annotate Game" to run a full analysis. The system evaluates each position
 - **`state_utils.py`**: Application state management and parameter validation helpers
 
 #### Analysis (`analysis/`)
-- **`analysis_engine.py`**: Move quality classification, game annotation, summary stats, and threaded analysis workers
+- **`analysis_engine.py`** handles move quality classification, full-game annotation, and summary statistics.
+- **`position.py`** exposes `analyze_position()` for streaming single-position evaluations. Shiny handles request scheduling and rendering.
 - **`stockfish.py`**: Stockfish integration with automatic binary download, multi-platform support, position evaluation, and MultiPV analysis streaming
 
 ## Technical Details
